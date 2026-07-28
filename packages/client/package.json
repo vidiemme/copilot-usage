@@ -1,0 +1,44 @@
+{
+  "name": "@vidiemme/copilot-proxy",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Proxy locale: misura il consumo di token di GitHub Copilot e lo attribuisce al progetto",
+  "license": "MIT",
+  "keywords": [
+    "github-copilot",
+    "token-usage",
+    "cost-attribution",
+    "proxy"
+  ],
+  "bin": {
+    "copilot-proxy": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=22.9"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch --env-file-if-exists=.env src/cli.ts start",
+    "start": "node dist/cli.js start",
+    "smoke": "npm run build && node scripts/smoke.mjs",
+    "verify-detection": "npm run build && node scripts/verify-detection.mjs",
+    "verify-e2e": "npm run build && node --env-file-if-exists=.env scripts/verify-e2e.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@vidiemme/copilot-usage-contract": "^0.1.0",
+    "fastify": "^5.2.1",
+    "undici": "^7.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

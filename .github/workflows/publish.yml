@@ -1,0 +1,63 @@
+name: Publish
+
+# Pubblica su npm quando si spinge un tag `vX.Y.Z`.
+# L'autenticazione usa OIDC (trusted publishing): nessun token npm da custodire
+# ne' da ruotare. Va configurato una volta su npmjs.com, per **entrambi** i
+# pacchetti, indicando questo file (`publish.yml`) come workflow autorizzato.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # necessario per OIDC
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest # i runner self-hosted non sono supportati da OIDC
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24' # serve npm >= 11.5.1 per il trusted publishing
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false # in una release non si riusa la cache
+
+      - run: npm ci
+
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      # Un tag che non corrisponde alle versioni dichiarate produrrebbe una
+      # release con un numero e un contenuto diversi: meglio fermarsi qui.
+      - name: Verifica coerenza fra tag e versioni
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for pkg in packages/shared packages/client; do
+            version=$(node -p "require('./$pkg/package.json').version")
+            if [ "$version" != "$tag" ]; then
+              echo "::error::$pkg e' alla versione $version ma il tag e' v$tag"
+              exit 1
+            fi
+          done
+
+      # Il contratto va per primo: il client ne importa a runtime la dimensione
+      # massima del batch e la somma dei token di input.
+      # Ripubblicare una versione gia' presente e' un errore, non un problema:
+      # se il contratto non e' cambiato si salta e si passa al client.
+      - name: Pubblica il contratto
+        run: |
+          version=$(node -p "require('./packages/shared/package.json').version")
+          if npm view "@vidiemme/copilot-usage-contract@$version" version >/dev/null 2>&1; then
+            echo "@vidiemme/copilot-usage-contract@$version gia' pubblicato, salto"
+          else
+            npm publish -w @vidiemme/copilot-usage-contract
+          fi
+
+      - name: Pubblica il proxy
+        run: npm publish -w @vidiemme/copilot-proxy
