@@ -1,4 +1,4 @@
-# github_proxy_pricing
+# copilot-usage
 
 Proxy di misurazione del consumo di token GitHub Copilot, con attribuzione **per progetto**
 oltre che per persona.
@@ -8,6 +8,11 @@ non dicono quanto costa un cliente o una commessa quando piu' developer lavorano
 progetti. Un client locale si mette in mezzo al traffico, legge i contatori di token che il
 modello restituisce e li manda a un servizio centrale, che li converte in costo con il listino
 GitHub e li scrive su Postgres.
+
+Questo repository contiene la **meta' pubblica**: il proxy che gira sulla postazione del
+developer e il contratto che parla con il servizio di raccolta. Il servizio di raccolta sta in
+un repository separato e privato, perche' custodisce listino, schema del database e dati di
+costo aziendali.
 
 | Client | Attribuzione |
 | --- | --- |
@@ -29,6 +34,7 @@ VS Code / CLI ──►│ client (proxy)         │────►│ server  
 
 | | `@vidiemme/copilot-proxy` | `@vidiemme/copilot-usage-collector` |
 | --- | --- | --- |
+| Dove sta | **questo repository**, pubblico su npm | repository separato, privato |
 | Dove gira | postazione del developer | cloud, sempre disponibile |
 | Cosa fa | proxy trasparente, estrae i contatori, riconosce il progetto | applica il listino, deduplica, persiste, espone il reporting |
 | Cosa gli serve | `COLLECTOR_URL` e `COLLECTOR_TOKEN` | accesso al database |
@@ -40,6 +46,11 @@ dichiarare quanto ha speso: manda solo contatori grezzi. Il database sta dietro 
 perche' le sue credenziali non devono finire su n macchine. Il traffico Copilot **non** passa
 dal cloud: il client parla direttamente con `api.githubcopilot.com`, e al collector arrivano
 solo eventi di consumo.
+
+E' anche il motivo per cui i due repository sono separati: qui non c'e' niente da tenere
+riservato, e un pacchetto che i developer installano con `npx` e' piu' credibile se il codice
+si puo' leggere. Il contratto sul filo (`@vidiemme/copilot-usage-contract`) e' pubblico per la
+stessa ragione: e' l'interfaccia, non il contenuto.
 
 Il client non dipende mai dalla raggiungibilita' del server: se il collector e' giu' o la rete
 manca, le richieste Copilot continuano a passare e gli eventi restano su un file di spool,
@@ -69,32 +80,12 @@ nelle richieste in streaming: senza quel flag l'upstream non restituirebbe alcun
 
 ## Avvio
 
-Serve Node >= 22.9. Il repository e' un monorepo npm: `npm install` alla radice installa
-entrambi i pacchetti.
+Serve Node >= 22.9.
 
 ### 1. Il servizio di raccolta
 
-Se non hai gia' un Postgres:
-
-```bash
-docker compose up -d      # Postgres su porta 5433
-```
-
-```bash
-npm install
-cp packages/server/.env.example packages/server/.env
-# imposta DATABASE_URL e almeno un token di ingest:
-#   INGEST_TOKENS=$(openssl rand -hex 32)
-npm run migrate
-npm run dev:server
-```
-
-Il server rifiuta di partire senza `INGEST_TOKENS`: meglio non partire che accettare traffico
-non autenticato. `INGEST_TOKENS` accetta piu' valori separati da virgola, cosi' si puo' ruotare
-il token senza interrompere le postazioni.
-
-Esponilo in HTTPS (`TLS_KEY_PATH` / `TLS_CERT_PATH`, o un terminatore TLS davanti): il token di
-ingest viaggia nell'header `Authorization`.
+Va avviato per primo, dal suo repository: e' lui a distribuire il `COLLECTOR_URL` e il token di
+ingest che serviranno a tutte le postazioni. Un solo token per tutta l'organizzazione.
 
 ### 2. Il client, su ogni postazione
 
@@ -161,8 +152,9 @@ Due vincoli che il client verifica all'avvio, e per cui si rifiuta di partire:
 #### Sviluppo del client da questo repository
 
 ```bash
+npm install
 cp packages/client/.env.example packages/client/.env
-npm run dev:client
+npm run dev
 ```
 
 In sviluppo il `.env` del pacchetto viene caricato da `node --env-file-if-exists`,
@@ -172,10 +164,14 @@ Verifica che tutto risponda prima di configurare gli editor:
 
 ```bash
 curl -s localhost:8787/_health     # client
-curl -s localhost:8080/_health     # server
 npm run smoke                      # proxy reale contro un upstream finto
-npm run verify-e2e                 # client -> server -> Postgres (server gia' avviato)
+npm run verify-detection           # rilevamento del progetto, con un collector finto
+npm run verify-e2e                 # client -> collector -> Postgres (collector gia' avviato)
 ```
+
+`npm run smoke` e `npm run verify-detection` non richiedono ne' Postgres ne' collector: sono
+le verifiche eseguibili su qualsiasi postazione. `verify-e2e` invece attraversa tutto lo stack
+e richiede il servizio di raccolta in esecuzione.
 
 `UPSTREAM_BASE_URL` puo' puntare direttamente a `https://api.githubcopilot.com` oppure a un
 traduttore Anthropic↔Copilot che gia' usi (es. `copilot-api` su `http://127.0.0.1:4141`).
@@ -352,7 +348,7 @@ o in alternativa senza un forward proxy con intercettazione TLS. Ma poiche' il v
 costante per tutti, il costo di configurazione e' una riga sola, una volta sola.
 
 Da **non** impostare: `overrideProxyUrl` punta all'endpoint delle code completions, che non
-consumano AI credits \u2014 dirottarlo aggiunge rischio senza dare dati.
+consumano AI credits — dirottarlo aggiunge rischio senza dare dati.
 
 > Sono impostazioni di **debug, non documentate e non supportate**: possono cambiare o sparire
 > tra una release e l'altra dell'estensione. Verifica dopo ogni aggiornamento che il traffico
@@ -413,30 +409,14 @@ qui**, e prima di percorrerlo considera che in Italia ricade nell'art. 4 dello S
 Lavoratori: va concordato con HR/legale e comunicato ai developer. Anche cosi', restando
 `http.proxy` di scope applicazione, non otterresti comunque il progetto.
 
-## Costo
+## Il contratto sul filo
 
-`packages/server/src/pricing/rates.json` replica il listino GitHub (USD per 1M token, 1 AI credit = $0.01).
-Tre dettagli che fanno la differenza fra una stima corretta e una sbagliata del 40%:
-
-- **cache write**: sui modelli Anthropic e' una tariffa a se' (1.25x l'input) e con Claude Code
-  e' spesso la voce dominante. Ignorarla sottostima parecchio.
-- **cached input in formato OpenAI**: `prompt_tokens` include gia' i `cached_tokens`, che vanno
-  sottratti per non pagarli due volte.
-- **fasce long context**: su GPT-5.4/5.5/5.6 e Gemini 3.1 Pro la tariffa raddoppia oltre soglia,
-  e la soglia si valuta sul totale di input della singola richiesta.
-
-Il costo viene **congelato alla scrittura** insieme a `rate_card_version`: quando GitHub
-aggiorna i prezzi lo storico resta coerente. Se compare un modello non a listino l'evento e'
-salvato con `priced = false` e il modello finisce in `unknown_models` — controlla quella
-tabella dopo ogni rilascio di nuovi modelli.
-
-## API di ingest
-
-Il contratto fra client e server, in `packages/shared`. Un solo endpoint:
+`packages/shared` e' pubblicato come `@vidiemme/copilot-usage-contract`: e' cio' che il client
+e il servizio di raccolta devono condividere, ed e' l'unica parte del sistema che li lega.
 
 ```
 POST /v1/usage
-Authorization: Bearer <token di INGEST_TOKENS>
+Authorization: Bearer <token di ingest>
 Content-Type: application/json
 
 { "events": [ { "requestId": "...", "occurredAt": "2026-02-01T10:00:00.000Z",
@@ -448,115 +428,28 @@ Content-Type: application/json
 Risponde `202 { "accepted": n }`, `400` su payload non conforme, `401` senza token valido.
 Massimo 500 eventi per richiesta.
 
-Il payload **non contiene il costo**: lo calcola il server. Nemmeno prompt, completion o path
-locali: solo contatori e identificatori. Gli eventi sono deduplicati su `requestId`, quindi un
-rinvio dopo un errore di rete non raddoppia la spesa.
+Il payload **non contiene il costo**: lo calcola il servizio di raccolta, con un listino che il
+client non conosce. Non contiene nemmeno prompt, completion o path locali: solo contatori e
+identificatori. Gli eventi sono deduplicati su `requestId`, quindi un rinvio dopo un errore di
+rete non raddoppia la spesa.
 
-Il confine di validazione e' il server: tronca i campi descrittivi (uno user-agent anomalo non
-deve far perdere la misura) e rifiuta cio' che renderebbe il dato insensato \u2014 contatori
-negativi, non numerici o oltre il miliardo, date non interpretabili, chiavi mancanti.
+Il confine di validazione e' il server, non il client: il client misura e consegna, il server
+decide cosa e' accettabile. Ogni modifica al contratto deve restare retrocompatibile con i
+proxy gia' installati sulle postazioni, che si aggiornano quando vogliono.
 
-## Reporting
-
-```
-GET /_usage/summary?groupBy=<dimensioni>&interval=<bucket>&from=&to=&project=&developer=
-GET /_usage/projects
-GET /_usage/developers
-GET /_usage/unknown-models
-GET /_health
-```
-
-`groupBy` accetta piu' dimensioni separate da virgola: `project`, `owner`, `repo`, `host`,
-`developer`, `team`, `model`, `vendor`, `client`, `source`. `interval` bucketizza il tempo:
-`none` (default), `day`, `week`, `month`. `project` e `developer` filtrano.
-
-```bash
-# costo per progetto, mese per mese
-curl "localhost:8080/_usage/summary?groupBy=project&interval=month"
-
-# rollup al livello del gruppo Git: il taglio per cliente o business unit
-curl "localhost:8080/_usage/summary?groupBy=owner&interval=month"
-
-# chi ha speso cosa su un progetto
-curl "localhost:8080/_usage/summary?groupBy=developer,model&project=acme/web/portal"
-
-# andamento giornaliero di una persona
-curl "localhost:8080/_usage/summary?groupBy=project&interval=day&developer=Gabriele%20Carassale"
-```
-
-La vista `usage_enriched` e' la base di ogni analisi: risolve i nomi leggibili di developer e
-progetto, espone la gerarchia del repository e pre-calcola i bucket `day` / `week` / `month`.
-Sopra ci sono `usage_daily_by_project`, `usage_daily_by_developer`, `usage_monthly_by_project`
-e `usage_monthly_by_owner`.
-
-### Dare un nome a progetti e developer
-
-Le tabelle `projects` e `developers` servono a etichettare cio' che il proxy riconosce da solo.
-Per un progetto basta un nome commerciale al posto del percorso Git:
-
-```sql
-UPDATE projects SET display_name = 'Portale ACME' WHERE project_id = 'acme/web/portal';
-```
-
-Il traffico che non porta un `/u/<nome>` esplicito viene attribuito a uno pseudonimo derivato
-dalla credenziale. Per associarlo a una persona:
-
-```sql
-INSERT INTO developers (developer_id, display_name, email, team)
-VALUES ('794d98febee52e98', 'Gabriele Carassale', 'g.carassale@...', 'red_tech');
-```
-
-`GET /_usage/developers` elenca gli pseudonimi ancora senza nome, con primo/ultimo avvistamento
-e client usati.
-
-> Lo pseudonimo e' calcolato sui soli campi **stabili** del token (`u`, `tid`), non sul token
-> intero: il token Copilot ruota ogni pochi minuti e l'hash completo avrebbe generato una
-> persona nuova a ogni rotazione, frammentando le analisi nel tempo.
-
-Ripartizione di un costo non attribuito (es. Copilot Chat non intercettato) sui progetti,
-usando come peso il consumo misurato:
-
-```sql
-WITH weights AS (
-    SELECT developer_id,
-           project_id,
-           SUM(cost_usd) / NULLIF(SUM(SUM(cost_usd)) OVER (PARTITION BY developer_id), 0) AS share
-    FROM usage_events
-    WHERE occurred_at >= DATE_TRUNC('month', NOW())
-      AND project_id <> 'unassigned'
-    GROUP BY developer_id, project_id
-)
-SELECT project_id, SUM(share * :costo_mensile_developer) AS quota_usd
-FROM weights
-GROUP BY project_id
-ORDER BY quota_usd DESC;
-```
-
-## Riconciliazione con la fattura GitHub
-
-I numeri di questo proxy sono una **stima interna per la ripartizione**, non la fattura.
-Mensilmente confronta `usage_daily_by_developer` con il billing usage report
-(`GET /enterprises/{enterprise}/settings/billing/usage`) e applica un fattore correttivo.
-
-Restano fuori dal perimetro del proxy:
-
-- code completions e next edit suggestions — non consumano AI credits, giustamente non contate;
-- Copilot code review — modello non dichiarato, piu' minuti Actions a carico del repo;
-- qualsiasi traffico che bypassa il proxy.
+Il costo, il reporting (`/_usage/summary`, `/_usage/projects`, `/_usage/developers`,
+`/_usage/unknown-models`), lo schema del database e la riconciliazione con la fattura GitHub
+sono documentati nel repository del servizio di raccolta.
 
 ## Sviluppo
 
-Monorepo npm con tre pacchetti: `shared` (contratto dell'evento sul filo), `client`, `server`.
+Monorepo npm con due pacchetti: `shared` (il contratto sul filo) e `client` (il proxy).
 
 ```bash
-npm test              # contratto, forwarder, ingest, parser usage, costo, attribuzione
-npm run smoke         # proxy reale contro un upstream finto, senza collector
+npm test                  # contratto, forwarder, parser usage, attribuzione, config
+npm run smoke             # proxy reale contro un upstream finto, senza collector
 npm run verify-detection  # rilevamento del progetto, con un collector finto
-npm run verify-e2e    # client -> server -> Postgres (richiede il server avviato)
-npm run verify-reporting  # ingest + endpoint di analisi (richiede Postgres)
+npm run verify-e2e        # client -> collector -> Postgres (richiede il collector avviato)
 npm run typecheck
 npm run build
 ```
-
-`npm run smoke` e `npm run verify-detection` non richiedono ne' Postgres ne' collector: sono
-le verifiche eseguibili su qualsiasi postazione.

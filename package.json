@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Misurazione del consumo di token GitHub Copilot con attribuzione per progetto",
+  "description": "Proxy locale che misura il consumo di token GitHub Copilot con attribuzione per progetto",
   "workspaces": [
     "packages/*"
   ],
@@ -11,15 +11,12 @@
     "node": ">=22.9"
   },
   "scripts": {
-    "build": "tsc -b && npm run copy-assets -w @vidiemme/copilot-usage-collector",
+    "build": "tsc -b",
     "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "vitest run",
-    "dev:client": "npm run dev -w @vidiemme/copilot-proxy",
-    "dev:server": "npm run dev -w @vidiemme/copilot-usage-collector",
-    "migrate": "npm run migrate -w @vidiemme/copilot-usage-collector",
+    "dev": "npm run dev -w @vidiemme/copilot-proxy",
     "smoke": "npm run smoke -w @vidiemme/copilot-proxy",
     "verify-detection": "npm run verify-detection -w @vidiemme/copilot-proxy",
-    "verify-reporting": "npm run verify-reporting -w @vidiemme/copilot-usage-collector",
     "verify-e2e": "npm run verify-e2e -w @vidiemme/copilot-proxy",
     "release": "npm run typecheck && npm test && npm publish -w @vidiemme/copilot-usage-contract && npm publish -w @vidiemme/copilot-proxy"
   },

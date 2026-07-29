@@ -54,5 +54,6 @@ La configurazione finisce in `~/.config/copilot-proxy/config.json` con permessi
 
 ## Requisiti
 
-Node.js >= 22.9 e un servizio di raccolta gia' attivo
-(`@vidiemme/copilot-usage-collector`).
+Node.js >= 22.9 e un servizio di raccolta gia' attivo, da cui prendere
+`--collector-url` e il token di ingest. Chiedili a chi lo amministra: sono gli
+stessi per tutta l'organizzazione.
