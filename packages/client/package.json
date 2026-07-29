@@ -4,6 +4,12 @@
   "type": "module",
   "description": "Proxy locale: misura il consumo di token di GitHub Copilot e lo attribuisce al progetto",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vidiemme/copilot-usage.git",
+    "directory": "packages/client"
+  },
+  "homepage": "https://github.com/vidiemme/copilot-usage#readme",
   "keywords": [
     "github-copilot",
     "token-usage",

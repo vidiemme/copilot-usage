@@ -4,6 +4,11 @@
   "type": "module",
   "description": "Contratto fra client di misurazione e servizio di raccolta",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vidiemme/copilot-usage.git",
+    "directory": "packages/shared"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {

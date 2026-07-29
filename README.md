@@ -200,6 +200,11 @@ ne' da ruotare. Va configurato una volta su npmjs.com, nelle impostazioni di
 workflow autorizzato. Il campo `repository` in `package.json` deve combaciare
 esattamente con il repository GitHub, altrimenti la pubblicazione viene rifiutata.
 
+**La prima pubblicazione va fatta a mano.** Il trusted publisher si configura dalle
+impostazioni di un pacchetto, e finche' il pacchetto non esiste sul registry quelle
+impostazioni non ci sono. Quindi: `npm run release` da locale una volta, poi si
+configura il trusted publishing su npmjs.com, e da li' in avanti rilascia la CI.
+
 Il contratto viene pubblicato per primo, perche' il client ne importa a runtime la
 dimensione massima del batch e la somma dei token di input; se la sua versione e'
 gia' sul registry il passo viene saltato, cosi' un rilascio del solo client non
