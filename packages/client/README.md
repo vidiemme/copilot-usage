@@ -22,18 +22,27 @@ persona e' uno pseudonimo, cioe' un hash con salt non invertibile.
 ## Uso
 
 ```bash
-# una volta sola
+# una volta sola, e poi basta
 npx @vidiemme/copilot-proxy@latest setup \
   --collector-url https://raccolta.interno/v1/usage \
   --salt <salt aziendale> \
   --workspace-roots ~/Work \
-  --vscode
-
-# a ogni sessione di lavoro
-npx @vidiemme/copilot-proxy@latest start
+  --vscode \
+  --autostart
 
 # se qualcosa non torna
 npx @vidiemme/copilot-proxy@latest doctor
+```
+
+`--vscode` scrive le impostazioni utente di VS Code, `--autostart` registra il
+proxy fra i servizi dell'utente: parte subito e a ogni accesso, senza che nessuno
+debba ricordarsi di lanciarlo. Con entrambe, dopo questo comando non c'e' piu'
+nulla da fare. Il comando stampa come disattivarlo.
+
+Senza `--autostart` il proxy si avvia a mano:
+
+```bash
+npx @vidiemme/copilot-proxy@latest start
 ```
 
 Il token di raccolta non si passa come opzione: finirebbe nella cronologia della

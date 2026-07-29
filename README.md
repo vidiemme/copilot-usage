@@ -101,19 +101,32 @@ ingest viaggia nell'header `Authorization`.
 Il client e' pubblicato su npm: sulle postazioni non serve clonare questo repository.
 
 ```bash
-# una volta sola
+# una volta sola, e poi basta
 npx @vidiemme/copilot-proxy@latest setup \
   --collector-url https://raccolta.interno/v1/usage \
   --salt <salt aziendale> \
   --workspace-roots ~/Work \
-  --vscode
-
-# a ogni sessione di lavoro
-npx @vidiemme/copilot-proxy@latest start
+  --vscode \
+  --autostart
 
 # quando qualcosa non torna
 npx @vidiemme/copilot-proxy@latest doctor
 ```
+
+Con `--vscode` e `--autostart` il rollout per il team e' una sola riga da
+incollare: la prima scrive le impostazioni utente di VS Code, la seconda registra
+il proxy fra i servizi dell'utente. Nessuno deve piu' lanciare `start` a mano ne'
+toccare `settings.json`.
+
+L'avvio automatico usa `launchd` su macOS (`~/Library/LaunchAgents`) e un unit
+utente `systemd` su Linux (`~/.config/systemd/user`); su Windows il comando
+stampa cosa mettere in Esecuzione automatica. Il servizio riparte da solo se il
+proxy muore, e il comando stampa la riga per disattivarlo.
+
+Una sola avvertenza: se hai installato via `npx`, il servizio punta dentro la
+cache di npx, che `npm cache clean` puo' svuotare. Per un avvio automatico che
+non si rompe mai, `npm i -g @vidiemme/copilot-proxy` e poi il setup con
+`--autostart`. Il comando lo segnala da solo.
 
 `setup` scrive `~/.config/copilot-proxy/config.json` con permessi `0600`
 (`%APPDATA%\copilot-proxy` su Windows; `COPILOT_PROXY_HOME` sposta la cartella).

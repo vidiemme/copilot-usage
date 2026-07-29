@@ -2,6 +2,7 @@
 import { mkdirSync, readFileSync, writeFileSync, copyFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { parseArgs } from 'node:util';
+import { installAutostart, isAutostartInstalled } from './autostart.js';
 import { loadConfig, type ClientConfig, type ConfigSource } from './config.js';
 import { configDir, configFile, vscodeSettingsFile } from './paths.js';
 import { buildApp } from './server.js';
@@ -24,6 +25,7 @@ Opzioni di setup:
   --port <n>                porta locale del proxy (default 8787)
   --upstream <url>          endpoint Copilot (default https://api.githubcopilot.com)
   --vscode                  scrive anche le impostazioni utente di VS Code
+  --autostart               avvia il proxy a ogni accesso, senza doverlo lanciare
   --force                   sovrascrive una configurazione esistente
 
 Il token di raccolta non si passa come opzione: finirebbe nella cronologia della
@@ -179,7 +181,21 @@ async function commandSetup(flags: Record<string, string | boolean | undefined>)
   if (flags.vscode === true) applyVsCodeSettings(config.port);
   else printVsCodeSettings(config.port);
 
+  if (flags.autostart === true) {
+    try {
+      const service = installAutostart();
+      console.log(`\nAvvio automatico attivo: ${service.file}`);
+      console.log(`Il proxy e' gia' partito e ripartira' a ogni accesso. Per disattivarlo:\n  ${service.removeHint}`);
+      if (service.warning) console.log(`\nATTENZIONE: ${service.warning}`);
+    } catch (error) {
+      console.error(`\nAvvio automatico non riuscito: ${(error as Error).message}`);
+      return 1;
+    }
+    return 0;
+  }
+
   console.log('\nPoi avvia il proxy con:  npx @vidiemme/copilot-proxy start');
+  console.log('Per non doverlo fare ogni volta, rilancia il setup con --autostart');
   return 0;
 }
 
@@ -328,14 +344,23 @@ async function commandDoctor(): Promise<number> {
   const pending = spoolSize(config.spoolPath);
   check(pending === 0, pending === 0 ? 'nessun evento in attesa di consegna' : `${pending} byte di eventi in attesa nello spool`);
 
+  // L'avvio automatico interessa solo se il proxy non sta gia' girando: chi
+  // preferisce lanciarlo a mano non deve vedere un errore.
+  let proxyUp = false;
   try {
     const health = await fetch(`http://127.0.0.1:${config.port}/_health`, {
       signal: AbortSignal.timeout(2000),
     });
-    check(health.ok, 'proxy in ascolto');
+    proxyUp = health.ok;
   } catch {
-    check(false, `nessun proxy in ascolto sulla porta ${config.port}: avvialo con "start"`);
+    proxyUp = false;
   }
+  check(
+    proxyUp,
+    proxyUp
+      ? `proxy in ascolto${isAutostartInstalled() ? ', con avvio automatico' : ''}`
+      : `nessun proxy in ascolto sulla porta ${config.port}: attivalo per sempre con "setup --autostart --force", o una volta sola con "start"`,
+  );
 
   report(results);
   return results.every(([ok]) => ok) ? 0 : 1;
@@ -373,6 +398,7 @@ async function main(): Promise<void> {
       upstream: { type: 'string' },
       'log-level': { type: 'string' },
       vscode: { type: 'boolean' },
+      autostart: { type: 'boolean' },
       force: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
