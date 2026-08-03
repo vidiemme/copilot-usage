@@ -1,18 +1,27 @@
 import { describe, expect, it } from 'vitest';
+import { homedir } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { loadConfig, type ConfigSource } from '../src/config.js';
+import { DEFAULT_COLLECTOR_URL } from '../src/defaults.js';
 
+// Sulla postazione del developer l'unico valore da procurarsi e' il token:
+// tutto il resto arriva dai default del pacchetto.
 const MINIMAL: ConfigSource = {
-  COLLECTOR_URL: 'https://raccolta.interno/v1/usage',
   COLLECTOR_TOKEN: 'a'.repeat(64),
-  DEVELOPER_ID_SALT: 'b'.repeat(64),
 };
 
 describe('loadConfig', () => {
   it('legge dalla sorgente passata invece che da process.env', () => {
-    const config = loadConfig({ ...MINIMAL, PORT: '9000' });
+    const config = loadConfig({ ...MINIMAL, PORT: '9000', COLLECTOR_URL: 'https://raccolta.interno/v1/usage' });
     expect(config.port).toBe(9000);
     expect(config.collectorUrl).toBe('https://raccolta.interno/v1/usage');
+  });
+
+  it('parte col solo token: URL, salt e cartelle di lavoro sono committati', () => {
+    const config = loadConfig(MINIMAL);
+    expect(config.collectorUrl).toBe(DEFAULT_COLLECTOR_URL);
+    expect(config.developerIdSalt.length).toBeGreaterThan(0);
+    expect(config.workspaceRoots).toEqual([homedir()]);
   });
 
   it('applica i default quando la chiave manca', () => {
@@ -51,7 +60,6 @@ describe('loadConfig', () => {
 
   it('pretende un salt reale: senza, gli pseudonimi sarebbero invertibili', () => {
     expect(() => loadConfig({ ...MINIMAL, DEVELOPER_ID_SALT: 'change-me' })).toThrow(/DEVELOPER_ID_SALT/);
-    expect(() => loadConfig({ ...MINIMAL, DEVELOPER_ID_SALT: '' })).toThrow(/DEVELOPER_ID_SALT/);
   });
 
   it('segnala quale chiave manca', () => {

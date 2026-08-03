@@ -19,18 +19,19 @@ al progetto su cui si sta lavorando.
   npx @vidiemme/copilot-proxy doctor    verifica che tutto sia a posto
 
 Opzioni di setup:
-  --collector-url <url>     endpoint del servizio di raccolta (obbligatorio)
-  --salt <valore>           salt degli pseudonimi, uguale per tutta l'azienda
-  --workspace-roots <a,b>   cartelle sotto cui vivono i repository
-  --port <n>                porta locale del proxy (default 8787)
-  --upstream <url>          endpoint Copilot (default https://api.githubcopilot.com)
   --vscode                  scrive anche le impostazioni utente di VS Code
   --autostart               avvia il proxy a ogni accesso, senza doverlo lanciare
+  --workspace-roots <a,b>   cartelle sotto cui vivono i repository (default: la home)
+  --port <n>                porta locale del proxy (default 8787)
+  --collector-url <url>     endpoint di raccolta, se diverso da quello aziendale
+  --salt <valore>           salt degli pseudonimi, se diverso da quello aziendale
+  --upstream <url>          endpoint Copilot (default https://api.githubcopilot.com)
   --force                   sovrascrive una configurazione esistente
 
-Il token di raccolta non si passa come opzione: finirebbe nella cronologia della
-shell e nella lista dei processi. Va nella variabile COLLECTOR_TOKEN, oppure lo
-chiede il comando in modo nascosto.
+L'unica cosa da procurarsi e' il token di raccolta, uguale per tutta l'azienda.
+Non si passa come opzione: finirebbe nella cronologia della shell e nella lista
+dei processi. Va nella variabile COLLECTOR_TOKEN, oppure lo chiede il comando in
+modo nascosto.
 
 Opzioni di start:
   --port <n>  --log-level <livello>  --collector-url <url>  --workspace-roots <a,b>
@@ -129,31 +130,20 @@ async function commandSetup(flags: Record<string, string | boolean | undefined>)
     return 1;
   }
 
-  const collectorUrl = (flags['collector-url'] as string | undefined) ?? process.env.COLLECTOR_URL;
-  if (!collectorUrl) {
-    console.error('Manca --collector-url: e\' l\'endpoint del servizio di raccolta aziendale.');
-    return 1;
-  }
-
-  const salt = (flags.salt as string | undefined) ?? process.env.DEVELOPER_ID_SALT;
-  if (!salt) {
-    console.error(
-      'Manca --salt. Non viene generato a caso di proposito: deve essere identico su tutte le postazioni, altrimenti la stessa persona risulta come developer diversi. Chiedilo a chi gestisce il servizio di raccolta.',
-    );
-    return 1;
-  }
-
   const token = process.env.COLLECTOR_TOKEN ?? (await promptSecret('Token di raccolta: '));
   if (token.trim().length === 0) {
     console.error('Token vuoto.');
     return 1;
   }
 
-  const values: Record<string, string> = {
-    COLLECTOR_URL: collectorUrl,
-    COLLECTOR_TOKEN: token.trim(),
-    DEVELOPER_ID_SALT: salt,
-  };
+  // Si scrive solo cio' che si discosta dai default del pacchetto: un file
+  // corto e' un file che si capisce, e i default restano aggiornabili con una
+  // nuova versione invece che postazione per postazione.
+  const values: Record<string, string> = { COLLECTOR_TOKEN: token.trim() };
+  const collectorUrl = flags['collector-url'] as string | undefined;
+  if (collectorUrl) values.COLLECTOR_URL = collectorUrl;
+  const salt = flags.salt as string | undefined;
+  if (salt) values.DEVELOPER_ID_SALT = salt;
   const workspaceRoots = flags['workspace-roots'] as string | undefined;
   if (workspaceRoots) values.WORKSPACE_ROOTS = workspaceRoots;
   if (flags.port) values.PORT = String(flags.port);
@@ -170,13 +160,8 @@ async function commandSetup(flags: Record<string, string | boolean | undefined>)
 
   writeConfigFile(values);
   console.log(`Scritto ${configFile()}`);
-
-  if (!workspaceRoots) {
-    console.log(
-      '\nATTENZIONE: senza --workspace-roots il progetto non viene riconosciuto e il consumo finisce in "unassigned".\n' +
-        '  Rilancia con: --workspace-roots ~/Work',
-    );
-  }
+  console.log(`Raccolta verso ${config.collectorUrl}`);
+  console.log(`Progetti cercati sotto ${config.workspaceRoots.join(', ')}`);
 
   if (flags.vscode === true) applyVsCodeSettings(config.port);
   else printVsCodeSettings(config.port);
@@ -249,7 +234,7 @@ async function commandStart(flags: Record<string, string | boolean | undefined>)
     config = loadConfig(mergedSource(overrides));
   } catch (error) {
     console.error(
-      `${(error as Error).message}\n\nSe e' la prima volta:  npx @vidiemme/copilot-proxy setup --collector-url <url> --salt <valore>`,
+      `${(error as Error).message}\n\nSe e' la prima volta:  npx @vidiemme/copilot-proxy setup`,
     );
     return 1;
   }
@@ -285,7 +270,7 @@ async function commandDoctor(): Promise<number> {
   } catch (error) {
     check(false, `configurazione: ${(error as Error).message}`);
     report(results);
-    console.log('\nLancia prima:  npx @vidiemme/copilot-proxy setup --collector-url <url> --salt <valore>');
+    console.log('\nLancia prima:  npx @vidiemme/copilot-proxy setup');
     return 1;
   }
 

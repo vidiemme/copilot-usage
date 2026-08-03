@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { DEFAULT_COLLECTOR_URL, DEFAULT_DEVELOPER_ID_SALT, defaultWorkspaceRoots } from './defaults.js';
 import { defaultSpoolPath } from './paths.js';
 
 /** Sorgente dei valori di configurazione: `process.env` o una mappa equivalente. */
@@ -17,7 +18,7 @@ export interface ClientConfig {
   upstreamAuthToken: string | undefined;
   tlsKeyPath: string | undefined;
   tlsCertPath: string | undefined;
-  /** Endpoint di raccolta, es. `https://copilot-usage.interno/v1/usage`. */
+  /** Endpoint di raccolta, es. `https://copilot-collector.swarm.vidiemme.it/v1/usage`. */
   collectorUrl: string;
   collectorToken: string;
   collectorTimeoutMs: number;
@@ -70,14 +71,14 @@ export function loadConfig(source: ConfigSource = process.env): ClientConfig {
       .map((item) => item.trim())
       .filter((item) => item.length > 0);
 
-  const developerIdSalt = optional('DEVELOPER_ID_SALT', '');
+  const developerIdSalt = optional('DEVELOPER_ID_SALT', DEFAULT_DEVELOPER_ID_SALT);
   if (developerIdSalt.length === 0 || developerIdSalt === 'change-me') {
     throw new Error(
       'DEVELOPER_ID_SALT deve essere impostato con un valore casuale: protegge lo pseudonimo del developer dal reverse lookup. Deve essere lo stesso su tutte le postazioni, altrimenti la stessa persona risulta come piu\' developer diversi',
     );
   }
 
-  const collectorUrl = required('COLLECTOR_URL');
+  const collectorUrl = optional('COLLECTOR_URL', DEFAULT_COLLECTOR_URL);
   if (
     collectorUrl.startsWith('http://') &&
     !/^https?:\/\/(localhost|127\.0\.0\.1)/.test(collectorUrl)
@@ -104,7 +105,7 @@ export function loadConfig(source: ConfigSource = process.env): ClientConfig {
     spoolPath: optional('SPOOL_PATH', defaultSpoolPath()),
     projectHeader: optional('PROJECT_HEADER', 'x-project-id').toLowerCase(),
     unassignedProject: optional('UNASSIGNED_PROJECT', 'unassigned'),
-    workspaceRoots: listOption('WORKSPACE_ROOTS', ''),
+    workspaceRoots: listOption('WORKSPACE_ROOTS', defaultWorkspaceRoots()),
     projectMarkers: listOption('PROJECT_MARKERS', '.git,.hg,.svn'),
     projectStickyTtlMs: intOption('PROJECT_STICKY_TTL_MS', 30 * 60_000),
     attributionTokens: parseAttributionTokens(optional('ATTRIBUTION_TOKENS', '{}')),

@@ -23,16 +23,15 @@ persona e' uno pseudonimo, cioe' un hash con salt non invertibile.
 
 ```bash
 # una volta sola, e poi basta
-npx @vidiemme/copilot-proxy@latest setup \
-  --collector-url https://raccolta.interno/v1/usage \
-  --salt <salt aziendale> \
-  --workspace-roots ~/Work \
-  --vscode \
-  --autostart
+npx @vidiemme/copilot-proxy@latest setup --vscode --autostart
 
 # se qualcosa non torna
 npx @vidiemme/copilot-proxy@latest doctor
 ```
+
+Non c'e' nulla da configurare a mano: endpoint di raccolta, salt e cartelle dove
+cercare i progetti sono gia' nel pacchetto. L'unica cosa da procurarsi e' il
+token di raccolta, che il comando chiede in modo nascosto.
 
 `--vscode` scrive le impostazioni utente di VS Code, `--autostart` registra il
 proxy fra i servizi dell'utente: parte subito e a ogni accesso, senza che nessuno
@@ -54,6 +53,5 @@ La configurazione finisce in `~/.config/copilot-proxy/config.json` con permessi
 
 ## Requisiti
 
-Node.js >= 22.9 e un servizio di raccolta gia' attivo, da cui prendere
-`--collector-url` e il token di ingest. Chiedili a chi lo amministra: sono gli
-stessi per tutta l'organizzazione.
+Node.js >= 22.9 e il token di ingest del servizio di raccolta: chiedilo a chi lo
+amministra, e' lo stesso per tutta l'organizzazione.

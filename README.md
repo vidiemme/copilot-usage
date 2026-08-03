@@ -87,22 +87,31 @@ Serve Node >= 22.9.
 Va avviato per primo, dal suo repository: e' lui a distribuire il `COLLECTOR_URL` e il token di
 ingest che serviranno a tutte le postazioni. Un solo token per tutta l'organizzazione.
 
+In Vidiemme e' gia' attivo su **`https://copilot-collector.swarm.vidiemme.it`**: l'endpoint di
+ingest da usare nel setup e' `https://copilot-collector.swarm.vidiemme.it/v1/usage`, il token
+va chiesto a chi lo amministra.
+
 ### 2. Il client, su ogni postazione
 
-Il client e' pubblicato su npm: sulle postazioni non serve clonare questo repository.
+Il client e' pubblicato su npm: sulle postazioni non serve clonare questo repository, ne'
+creare file di configurazione a mano. Endpoint di raccolta, salt degli pseudonimi e cartelle
+di lavoro sono default committati nel pacchetto ([`src/defaults.ts`](packages/client/src/defaults.ts)):
+l'unica cosa da procurarsi e' il token di ingest.
 
 ```bash
-# una volta sola, e poi basta
-npx @vidiemme/copilot-proxy@latest setup \
-  --collector-url https://raccolta.interno/v1/usage \
-  --salt <salt aziendale> \
-  --workspace-roots ~/Work \
-  --vscode \
-  --autostart
+# una volta sola, e poi basta: il token viene chiesto in modo nascosto
+npx @vidiemme/copilot-proxy@latest setup --vscode --autostart
+
+# per un rollout non interattivo (MDM, script)
+COLLECTOR_TOKEN=<token> npx @vidiemme/copilot-proxy@latest setup --vscode --autostart
 
 # quando qualcosa non torna
 npx @vidiemme/copilot-proxy@latest doctor
 ```
+
+Aggiornare l'endpoint di raccolta o il salt non richiede quindi di ripassare da n postazioni:
+si pubblica una versione nuova del pacchetto. Chi ha bisogno di scostarsi dai default ha
+comunque `--collector-url`, `--salt` e `--workspace-roots`.
 
 Con `--vscode` e `--autostart` il rollout per il team e' una sola riga da
 incollare: la prima scrive le impostazioni utente di VS Code, la seconda registra
@@ -121,7 +130,9 @@ non si rompe mai, `npm i -g @vidiemme/copilot-proxy` e poi il setup con
 
 `setup` scrive `~/.config/copilot-proxy/config.json` con permessi `0600`
 (`%APPDATA%\copilot-proxy` su Windows; `COPILOT_PROXY_HOME` sposta la cartella).
-Le chiavi del file sono le stesse delle variabili d'ambiente elencate piu' sotto.
+Il file contiene **solo cio' che si discosta dai default**: di norma il token e
+nient'altro. Le sue chiavi sono le stesse delle variabili d'ambiente elencate
+piu' sotto.
 
 I valori si sovrappongono in quest'ordine: **opzioni della riga di comando >
 variabili d'ambiente > file di configurazione > default**. Sotto `npx` non viene
@@ -143,9 +154,10 @@ nello spool e proxy in ascolto. Esce con codice diverso da zero se qualcosa non 
 
 Due vincoli che il client verifica all'avvio, e per cui si rifiuta di partire:
 
-- `DEVELOPER_ID_SALT` deve essere valorizzato e **identico su tutte le macchine**: e' cio' che
-  rende lo pseudonimo della stessa persona confrontabile fra postazioni. Non viene
-  generato a caso dal `setup` proprio per questo.
+- il salt degli pseudonimi deve essere **identico su tutte le macchine**: e' cio' che rende lo
+  pseudonimo della stessa persona confrontabile fra postazioni. Non viene generato a caso dal
+  `setup` proprio per questo — e' una costante del pacchetto. Cambiarlo spezza la continuita'
+  dello storico: da quel momento la stessa persona compare con un id nuovo.
 - `COLLECTOR_URL` in `http://` e' ammesso solo verso localhost: altrove il token di ingest
   viaggerebbe in chiaro.
 
@@ -157,8 +169,9 @@ cp packages/client/.env.example packages/client/.env
 npm run dev
 ```
 
-In sviluppo il `.env` del pacchetto viene caricato da `node --env-file-if-exists`,
-non da codice: il percorso `npx` e quello locale restano cosi' distinti.
+Il `.env` serve **solo** allo sviluppo del proxy, per puntarlo a un collector locale: le
+postazioni non ne hanno uno. In sviluppo viene caricato da `node --env-file-if-exists`, non da
+codice, cosi' il percorso `npx` e quello locale restano distinti.
 
 Verifica che tutto risponda prima di configurare gli editor:
 
@@ -386,10 +399,10 @@ Non disabilitare `http.proxyStrictSSL`.
 curl http://127.0.0.1:8787/_health
 
 # 2. dopo qualche prompt in VS Code, il traffico deve comparire qui
-curl "https://copilot-usage.interno/_usage/summary?groupBy=developer"
+curl "https://copilot-collector.swarm.vidiemme.it/_usage/summary?groupBy=developer"
 
 # 3. nessun modello deve finire fra gli sconosciuti
-curl https://copilot-usage.interno/_usage/unknown-models
+curl https://copilot-collector.swarm.vidiemme.it/_usage/unknown-models
 ```
 
 Se il punto 1 risponde ma il punto 2 resta vuoto, guarda il file di spool indicato da

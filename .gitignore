@@ -1,10 +1,11 @@
 node_modules/
 dist/
+# Ogni .env porta token o salt: fuori dal repo, che qui e' pubblico.
 .env
-.env.local
+.env.*
+!.env.example
 *.log
 coverage/
 .DS_Store
-.env
 .usage-spool.jsonl*
 *.tsbuildinfo
