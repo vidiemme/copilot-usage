@@ -1,6 +1,6 @@
 {
   "name": "@vidiemme/copilot-usage-contract",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Contratto fra client di misurazione e servizio di raccolta",
   "license": "MIT",
