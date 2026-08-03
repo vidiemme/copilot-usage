@@ -208,11 +208,20 @@ ne' da ruotare. Va configurato una volta su npmjs.com, nelle impostazioni di
 **entrambi** i pacchetti, indicando organizzazione, repository e `publish.yml` come
 workflow autorizzato. Il campo `repository` in `package.json` deve combaciare
 esattamente con il repository GitHub, altrimenti la pubblicazione viene rifiutata.
+Il codice deve quindi stare su GitHub: OIDC non e' disponibile per GitLab
+self-hosted, solo per GitHub Actions, GitLab.com e CircleCI.
 
-**La prima pubblicazione va fatta a mano.** Il trusted publisher si configura dalle
-impostazioni di un pacchetto, e finche' il pacchetto non esiste sul registry quelle
-impostazioni non ci sono. Quindi: `npm run release` da locale una volta, poi si
-configura il trusted publishing su npmjs.com, e da li' in avanti rilascia la CI.
+**Il primo rilascio ha un problema di uovo e gallina.** Il trusted publisher si
+configura dalle impostazioni di un pacchetto, e finche' il pacchetto non esiste
+sul registry quelle impostazioni non ci sono. Per uscirne senza pubblicare a mano:
+
+1. su npmjs.com, crea un **granular access token** in scrittura sullo scope `@vidiemme`,
+   con scadenza breve;
+2. mettilo nel secret `NPM_TOKEN` del repository GitHub;
+3. spingi il tag: la CI pubblica entrambi i pacchetti usando il token;
+4. su npmjs.com configura il trusted publishing sui due pacchetti appena creati;
+5. **cancella il secret e revoca il token.** Da qui in avanti la CI usa OIDC — il
+   CLI lo preferisce comunque al token quando disponibile.
 
 Il contratto viene pubblicato per primo, perche' il client ne importa a runtime la
 dimensione massima del batch e la somma dei token di input; se la sua versione e'

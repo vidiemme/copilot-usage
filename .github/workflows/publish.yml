@@ -1,9 +1,19 @@
 name: Publish
 
 # Pubblica su npm quando si spinge un tag `vX.Y.Z`.
-# L'autenticazione usa OIDC (trusted publishing): nessun token npm da custodire
-# ne' da ruotare. Va configurato una volta su npmjs.com, per **entrambi** i
-# pacchetti, indicando questo file (`publish.yml`) come workflow autorizzato.
+#
+# A regime l'autenticazione usa OIDC (trusted publishing): nessun token npm da
+# custodire ne' da ruotare. Va configurato una volta su npmjs.com, per
+# **entrambi** i pacchetti, indicando questo file (`publish.yml`) come workflow
+# autorizzato.
+#
+# Il trusted publisher pero' si configura dalle impostazioni di un pacchetto,
+# che finche' il pacchetto non esiste sul registry non ci sono. Per la sola
+# prima pubblicazione serve quindi un token: si mette un granular access token
+# nel secret `NPM_TOKEN` del repository, e lo si cancella subito dopo. Il CLI
+# preferisce OIDC quando disponibile, quindi lasciare il secret non cambierebbe
+# il comportamento a regime — ma un token che non serve piu' e' solo un rischio
+# in piu'.
 on:
   push:
     tags:
@@ -51,6 +61,8 @@ jobs:
       # Ripubblicare una versione gia' presente e' un errore, non un problema:
       # se il contratto non e' cambiato si salta e si passa al client.
       - name: Pubblica il contratto
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           version=$(node -p "require('./packages/shared/package.json').version")
           if npm view "@vidiemme/copilot-usage-contract@$version" version >/dev/null 2>&1; then
@@ -60,4 +72,6 @@ jobs:
           fi
 
       - name: Pubblica il proxy
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish -w @vidiemme/copilot-proxy
