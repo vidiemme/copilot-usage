@@ -27,7 +27,13 @@ npx @vidiemme/copilot-proxy@latest setup --vscode --autostart
 
 # se qualcosa non torna
 npx @vidiemme/copilot-proxy@latest doctor
+
+# versione, eventi misurati e consegnati, spool in attesa
+npx @vidiemme/copilot-proxy@latest status
 ```
+
+Con l'avvio automatico, dopo un aggiornamento (`npm i -g @vidiemme/copilot-proxy@latest`)
+serve `copilot-proxy restart`; per toglierlo, `copilot-proxy uninstall`.
 
 Non c'e' nulla da configurare a mano: endpoint di raccolta, salt e cartelle dove
 cercare i progetti sono gia' nel pacchetto. L'unica cosa da procurarsi e' il

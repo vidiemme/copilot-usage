@@ -54,7 +54,9 @@ stessa ragione: e' l'interfaccia, non il contenuto.
 
 Il client non dipende mai dalla raggiungibilita' del server: se il collector e' giu' o la rete
 manca, le richieste Copilot continuano a passare e gli eventi restano su un file di spool,
-rispediti al primo tentativo utile. La chiave `request_id` rende i rinvii innocui.
+rispediti al primo tentativo utile. Lo stesso vale se il collector rifiuta il token (401/403):
+un token ruotato si sistema sulla postazione, e nel frattempo la misura non va persa. La
+chiave `request_id` rende i rinvii innocui.
 
 > **Modello di fiducia.** Il token di ingest e' un segreto condiviso a livello di
 > organizzazione: chiunque lo possieda puo' dichiarare qualsiasi `developer_id` e
@@ -74,9 +76,15 @@ Riconosce entrambi i dialetti senza configurazione:
 | --- | --- |
 | Anthropic Messages | `message_start` (input, cache read, cache write) + `message_delta` (output) |
 | OpenAI / Copilot chat completions | chunk finale con `usage`, richiede `stream_options.include_usage` |
+| OpenAI Responses API (`/responses`, Codex, modelli GPT in VS Code) | evento `response.completed` (o `incomplete` / `failed`), in `response.usage` |
 
-Per il secondo caso il client **inietta automaticamente** `stream_options: { include_usage: true }`
-nelle richieste in streaming: senza quel flag l'upstream non restituirebbe alcun contatore.
+Per le chat completions il client **inietta automaticamente** `stream_options: { include_usage: true }`
+nelle richieste in streaming: senza quel flag l'upstream non restituirebbe alcun contatore. La
+Responses API include sempre l'usage e non accetta quel parametro, quindi il corpo resta intatto.
+
+Nel formato OpenAI `prompt_tokens` comprende gia' i token letti da cache e, sui modelli che lo
+fatturano (GPT-5.6, GPT-6), quelli scritti in cache: vengono sottratti dall'input e contati a
+parte, cosi' ognuno ha la sua tariffa.
 
 ## Avvio
 
@@ -107,6 +115,9 @@ COLLECTOR_TOKEN=<token> npx @vidiemme/copilot-proxy@latest setup --vscode --auto
 
 # quando qualcosa non torna
 npx @vidiemme/copilot-proxy@latest doctor
+
+# versione, eventi misurati e consegnati, spool in attesa
+npx @vidiemme/copilot-proxy@latest status
 ```
 
 Aggiornare l'endpoint di raccolta o il salt non richiede quindi di ripassare da n postazioni:
@@ -126,7 +137,23 @@ proxy muore, e il comando stampa la riga per disattivarlo.
 Una sola avvertenza: se hai installato via `npx`, il servizio punta dentro la
 cache di npx, che `npm cache clean` puo' svuotare. Per un avvio automatico che
 non si rompe mai, `npm i -g @vidiemme/copilot-proxy` e poi il setup con
-`--autostart`. Il comando lo segnala da solo.
+`--autostart`. Il comando lo segnala da solo, e segnala anche un Node gestito da
+nvm, fnm, asdf, mise, n o volta: il servizio registra il percorso esatto
+dell'eseguibile, che sparisce se quella versione viene disinstallata. Dopo un
+cambio di versione di Node basta `setup --autostart --force`.
+
+Per la manutenzione del servizio:
+
+```bash
+npm i -g @vidiemme/copilot-proxy@latest && copilot-proxy restart   # aggiornamento
+copilot-proxy uninstall                                             # rimozione
+```
+
+`restart` serve perche' il servizio continua a eseguire la versione caricata
+all'avvio finche' non viene riavviato; `doctor` segnala quando la versione in
+esecuzione e quella installata non coincidono. `uninstall` toglie l'avvio
+automatico ma lascia configurazione e impostazioni di VS Code: vanno tolte a
+mano, altrimenti Copilot non raggiunge piu' l'upstream.
 
 `setup` scrive `~/.config/copilot-proxy/config.json` con permessi `0600`
 (`%APPDATA%\copilot-proxy` su Windows; `COPILOT_PROXY_HOME` sposta la cartella).
@@ -151,6 +178,10 @@ non lo tocca e stampa lo snippet da incollare a mano.
 `doctor` verifica configurazione, cartelle di lavoro, raggiungibilita' e validita'
 del token verso il servizio di raccolta, impostazione di VS Code, eventi rimasti
 nello spool e proxy in ascolto. Esce con codice diverso da zero se qualcosa non va.
+Segnala come `WARN`, senza fallire, un proxy in esecuzione di versione diversa da
+quella installata e l'assenza di traffico misurato da oltre 24 ore: e' il sintomo
+tipico di un aggiornamento dell'estensione Copilot che ignora le impostazioni di
+debug. Gli stessi contatori sono su `http://127.0.0.1:8787/_health`.
 
 Due vincoli che il client verifica all'avvio, e per cui si rifiuta di partire:
 
@@ -192,15 +223,18 @@ Il client funziona in entrambi i casi.
 
 ### 3. Pubblicare una nuova versione del client
 
-Da CI, spingendo un tag:
+Da CI, spingendo un tag con la versione del proxy:
 
 ```bash
-npm version 0.2.0 -w @vidiemme/copilot-proxy   # e il contratto, se e' cambiato
+npm version 0.2.0 -w @vidiemme/copilot-proxy   # il contratto solo se e' cambiato
 git tag v0.2.0 && git push --tags
 ```
 
 [`.github/workflows/publish.yml`](.github/workflows/publish.yml) esegue typecheck,
-test e build, verifica che il tag corrisponda alle versioni dichiarate, poi pubblica.
+test e build, verifica che il tag corrisponda alla versione del proxy, poi pubblica.
+Il contratto ha un suo ciclo di versioni: non e' legato al tag.
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) esegue le stesse verifiche,
+piu' `smoke` e `verify-detection`, a ogni push su `main` e su ogni pull request.
 
 L'autenticazione usa **trusted publishing**: GitHub Actions si autentica su npm via
 OIDC, con credenziali usa e getta. Non c'e' nessun token npm da mettere nei secret
@@ -232,7 +266,7 @@ tratterebbe uno scope come privato.
 In locale, se serve pubblicare a mano:
 
 ```bash
-npm run release      # typecheck, test, poi pubblica contratto e proxy
+npm run release      # typecheck, test, contratto (se la versione e' nuova), poi proxy
 ```
 
 ## Attribuzione al progetto
@@ -261,6 +295,12 @@ PROJECT_MARKERS=.git,.hg,.svn
 ignorato. Un repository nuovo funziona subito, senza toccare nulla. Quando una richiesta cita
 piu' progetti vince il piu' menzionato, cosi' un riferimento isolato a un altro repo non
 dirotta l'attribuzione.
+
+I path vengono riconosciuti in forma nativa (`/Users/...`, `C:\Users\...`), dentro URI
+`file://` percent-encoded e con gli escape del JSON, anche quando una cartella ha spazi nel
+nome. Il supporto Windows e' coperto dai test solo nella logica di riconoscimento: va provato
+su una postazione reale prima di contarci. L'associazione path → repository resta in cache
+10 minuti, cosi' un remote aggiunto o cambiato si vede senza riavviare il proxy.
 
 L'identita' del progetto **non** e' il nome della cartella — quello lo sceglie chi clona ed e'
 diverso da macchina a macchina — ma il percorso sul server Git, letto dal remote `origin`:
@@ -447,8 +487,13 @@ Content-Type: application/json
                           "cacheWriteTokens": 0, "outputTokens": 0 }, ... } ] }
 ```
 
-Risponde `202 { "accepted": n }`, `400` su payload non conforme, `401` senza token valido.
-Massimo 500 eventi per richiesta.
+Risponde `202 { "accepted": n }`, `400` su payload non conforme, `401` senza token valido,
+`503` se il database non accetta la scrittura (il client ritenta). Gli eventi sono validati
+uno per uno: quelli malformati tornano in `rejected` con indice ed errore, senza far perdere
+gli altri del batch. Massimo 500 eventi per richiesta.
+
+Il client si presenta con lo user-agent `@vidiemme/copilot-proxy/<versione>`: il collector lo
+registra per evento, cosi' si vede quali postazioni vanno aggiornate.
 
 Il payload **non contiene il costo**: lo calcola il servizio di raccolta, con un listino che il
 client non conosce. Non contiene nemmeno prompt, completion o path locali: solo contatori e
@@ -468,7 +513,7 @@ sono documentati nel repository del servizio di raccolta.
 Monorepo npm con due pacchetti: `shared` (il contratto sul filo) e `client` (il proxy).
 
 ```bash
-npm test                  # contratto, forwarder, parser usage, attribuzione, config
+npm test                  # contratto, forwarder, parser usage, attribuzione, config, proxy end-to-end
 npm run smoke             # proxy reale contro un upstream finto, senza collector
 npm run verify-detection  # rilevamento del progetto, con un collector finto
 npm run verify-e2e        # client -> collector -> Postgres (richiede il collector avviato)
