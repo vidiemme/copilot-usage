@@ -31,6 +31,9 @@ export interface ClientConfig {
   projectStickyTtlMs: number;
   attributionTokens: Record<string, AttributionMapping>;
   developerIdSalt: string;
+  /** Nome mostrato in dashboard al posto dello pseudonimo; assente = anonimo. */
+  developerName: string | undefined;
+  developerEmail: string | undefined;
   flushIntervalMs: number;
   flushMaxBatch: number;
 }
@@ -110,6 +113,8 @@ export function loadConfig(source: ConfigSource = process.env): ClientConfig {
     projectStickyTtlMs: intOption('PROJECT_STICKY_TTL_MS', 30 * 60_000),
     attributionTokens: parseAttributionTokens(optional('ATTRIBUTION_TOKENS', '{}')),
     developerIdSalt,
+    developerName: read('DEVELOPER_NAME'),
+    developerEmail: read('DEVELOPER_EMAIL'),
     flushIntervalMs: intOption('FLUSH_INTERVAL_MS', 5000),
     flushMaxBatch: intOption('FLUSH_MAX_BATCH', 100),
   };

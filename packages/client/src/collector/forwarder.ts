@@ -65,6 +65,7 @@ export class UsageForwarder {
   private readonly batchSize: number;
   private readonly spoolPath: string;
   private readonly sendingPath: string;
+  private readonly identityHeaders: Record<string, string> = {};
 
   constructor(
     private readonly config: ClientConfig,
@@ -73,6 +74,13 @@ export class UsageForwarder {
     this.batchSize = Math.min(config.flushMaxBatch, MAX_EVENTS_PER_BATCH);
     this.spoolPath = config.spoolPath;
     this.sendingPath = `${config.spoolPath}.sending`;
+    // Gli header HTTP sono ASCII: nomi accentati viaggiano percent-encoded.
+    if (config.developerName) {
+      this.identityHeaders['x-developer-name'] = encodeURIComponent(config.developerName);
+      if (config.developerEmail) {
+        this.identityHeaders['x-developer-email'] = encodeURIComponent(config.developerEmail);
+      }
+    }
   }
 
   start(): void {
@@ -152,6 +160,7 @@ export class UsageForwarder {
           'content-type': 'application/json',
           authorization: `Bearer ${this.config.collectorToken}`,
           'user-agent': CLIENT_USER_AGENT,
+          ...this.identityHeaders,
         },
         body: JSON.stringify({ events }),
         signal: AbortSignal.timeout(this.config.collectorTimeoutMs),

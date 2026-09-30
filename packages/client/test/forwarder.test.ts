@@ -16,6 +16,7 @@ let received: UsageEventPayload[];
 let status: number;
 let requests: number;
 let userAgent: string | undefined;
+let developerName: string | undefined;
 
 const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
 
@@ -71,6 +72,7 @@ beforeEach(async () => {
     req.on('end', () => {
       requests += 1;
       userAgent = req.headers['user-agent'];
+      developerName = req.headers['x-developer-name'] as string | undefined;
       if (req.headers.authorization !== `Bearer ${TOKEN}`) {
         res.writeHead(401).end();
         return;
@@ -165,6 +167,15 @@ describe('UsageForwarder', () => {
     await forwarder.flush();
 
     expect(userAgent).toMatch(/^@vidiemme\/copilot-proxy\/\d+\.\d+\.\d+/);
+    expect(developerName).toBeUndefined();
+  });
+
+  it('manda il nome del developer, se configurato', async () => {
+    const forwarder = makeForwarder({ developerName: 'Niccolò Rossi' });
+    forwarder.enqueue(makeEvent('a'));
+    await forwarder.flush();
+
+    expect(decodeURIComponent(developerName ?? '')).toBe('Niccolò Rossi');
   });
 
   it('tiene i contatori di consegna', async () => {
