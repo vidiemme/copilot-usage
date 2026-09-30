@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
-import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
+import { stat } from 'node:fs/promises';
+import Fastify, { LogController, type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import { UsageForwarder } from './collector/forwarder.js';
 import type { ClientConfig } from './config.js';
 import { createProxyHandler } from './proxy/handler.js';
 import { ProjectDetector } from './projectDetector.js';
+import { CLIENT_VERSION } from './version.js';
 
 export interface App {
   server: FastifyInstance;
@@ -18,8 +20,8 @@ function createServer(config: ClientConfig): FastifyInstance {
     keepAliveTimeout: 120_000,
     bodyLimit: 64 * 1024 * 1024,
     // Il log per-richiesta duplicherebbe il record di usage senza aggiungere
-    // nulla. Deprecato in Fastify 5, da migrare a `logController` in v6.
-    disableRequestLogging: true,
+    // nulla.
+    logController: new LogController({ disableRequestLogging: true }),
   } satisfies FastifyServerOptions;
 
   if (!config.tlsKeyPath || !config.tlsCertPath) return Fastify(options);
@@ -59,11 +61,19 @@ export async function buildApp(config: ClientConfig): Promise<App> {
     );
   }
 
+  const startedAt = new Date().toISOString();
   server.get('/_health', async () => ({
     ok: true,
+    version: CLIENT_VERSION,
+    startedAt,
     upstream: config.upstreamBaseUrl,
     collector: config.collectorUrl,
     projectDetection: detector.enabled,
+    usage: forwarder.stats(),
+    spoolBytes: await stat(config.spoolPath).then(
+      (info) => info.size,
+      () => 0,
+    ),
   }));
 
   server.route({

@@ -1,6 +1,7 @@
 import { appendFile, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { MAX_EVENTS_PER_BATCH, type UsageEventPayload } from '@vidiemme/copilot-usage-contract';
 import type { ClientConfig } from '../config.js';
+import { CLIENT_USER_AGENT } from '../version.js';
 
 export interface Logger {
   info: (obj: object, msg: string) => void;
@@ -12,6 +13,24 @@ export interface Logger {
 const MAX_QUEUE_LENGTH = 10_000;
 /** Tetto agli eventi parcheggiati su disco: si tengono i piu' recenti. */
 const MAX_SPOOL_EVENTS = 50_000;
+
+/**
+ * Rifiuti che si risolvono senza toccare il payload: credenziali da sistemare,
+ * timeout, rate limit. Gli eventi restano nello spool invece di andare persi.
+ */
+const RETRYABLE_CLIENT_ERRORS = new Set([401, 403, 408, 429]);
+
+export interface ForwarderStats {
+  /** Eventi misurati dall'avvio del processo. */
+  recorded: number;
+  delivered: number;
+  /** Scartati per coda piena o rifiuto definitivo del collector. */
+  dropped: number;
+  lastEventAt: string | null;
+  lastDeliveryAt: string | null;
+  /** Ultimo stato HTTP di errore del collector, o `unreachable`. */
+  lastError: string | null;
+}
 
 function chunk<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -35,6 +54,14 @@ export class UsageForwarder {
   private timer: NodeJS.Timeout | undefined;
   private pending: Promise<void> | undefined;
   private dropped = 0;
+  private readonly counters: ForwarderStats = {
+    recorded: 0,
+    delivered: 0,
+    dropped: 0,
+    lastEventAt: null,
+    lastDeliveryAt: null,
+    lastError: null,
+  };
   private readonly batchSize: number;
   private readonly spoolPath: string;
   private readonly sendingPath: string;
@@ -61,8 +88,11 @@ export class UsageForwarder {
   }
 
   enqueue(event: UsageEventPayload): void {
+    this.counters.recorded += 1;
+    this.counters.lastEventAt = new Date().toISOString();
     if (this.queue.length >= MAX_QUEUE_LENGTH) {
       this.dropped += 1;
+      this.counters.dropped += 1;
       if (this.dropped % 100 === 1) {
         this.logger.error({ dropped: this.dropped }, 'coda usage piena, eventi scartati');
       }
@@ -107,6 +137,10 @@ export class UsageForwarder {
     if (this.queue.length > 0) await this.spool(this.queue.splice(0));
   }
 
+  stats(): ForwarderStats {
+    return { ...this.counters };
+  }
+
   private async send(events: UsageEventPayload[]): Promise<boolean> {
     if (events.length === 0) return true;
 
@@ -117,26 +151,53 @@ export class UsageForwarder {
         headers: {
           'content-type': 'application/json',
           authorization: `Bearer ${this.config.collectorToken}`,
+          'user-agent': CLIENT_USER_AGENT,
         },
         body: JSON.stringify({ events }),
         signal: AbortSignal.timeout(this.config.collectorTimeoutMs),
       });
     } catch (error) {
+      this.counters.lastError = 'unreachable';
       this.logger.warn({ err: error, events: events.length }, 'collector irraggiungibile');
       return false;
     }
 
-    if (response.ok) return true;
+    if (response.ok) {
+      this.counters.delivered += events.length;
+      this.counters.lastDeliveryAt = new Date().toISOString();
+      this.counters.lastError = null;
+      await this.logRejected(response);
+      return true;
+    }
 
-    // Un 4xx non si risolve ritentando: il payload e' rifiutato o le
-    // credenziali sono sbagliate. Tenerlo nello spool bloccherebbe tutto il
-    // resto della coda, quindi si scarta e si segnala.
-    const permanent = response.status >= 400 && response.status < 500 && response.status !== 429;
+    this.counters.lastError = String(response.status);
+    // Un 4xx che non dipende da credenziali o limiti non si risolve
+    // ritentando: il payload e' rifiutato. Tenerlo nello spool bloccherebbe
+    // tutto il resto della coda, quindi si scarta e si segnala.
+    const permanent =
+      response.status >= 400 &&
+      response.status < 500 &&
+      !RETRYABLE_CLIENT_ERRORS.has(response.status);
+    if (permanent) this.counters.dropped += events.length;
     this.logger.error(
       { status: response.status, events: events.length, permanent },
       permanent ? 'collector ha rifiutato gli eventi' : 'collector non disponibile',
     );
     return permanent;
+  }
+
+  /** Il collector accetta i singoli eventi validi e restituisce gli scartati. */
+  private async logRejected(response: Response): Promise<void> {
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      return;
+    }
+    const rejected = (body as { rejected?: unknown } | null)?.rejected;
+    if (!Array.isArray(rejected) || rejected.length === 0) return;
+    this.counters.dropped += rejected.length;
+    this.logger.error({ rejected: rejected.slice(0, 10) }, 'collector ha scartato alcuni eventi');
   }
 
   private async drainSpool(): Promise<void> {

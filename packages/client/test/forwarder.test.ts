@@ -15,6 +15,7 @@ let server: Server;
 let received: UsageEventPayload[];
 let status: number;
 let requests: number;
+let userAgent: string | undefined;
 
 const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
 
@@ -69,6 +70,7 @@ beforeEach(async () => {
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
       requests += 1;
+      userAgent = req.headers['user-agent'];
       if (req.headers.authorization !== `Bearer ${TOKEN}`) {
         res.writeHead(401).end();
         return;
@@ -144,6 +146,35 @@ describe('UsageForwarder', () => {
     await forwarder.flush();
 
     expect(spoolLines()).toHaveLength(1);
+  });
+
+  // Un token ruotato o scaduto si sistema sulla postazione: nel frattempo
+  // le misure non devono andare perse.
+  it('tiene gli eventi nello spool se il token viene rifiutato', async () => {
+    const forwarder = makeForwarder({ collectorToken: 'token-scaduto' });
+    forwarder.enqueue(makeEvent('a'));
+    await forwarder.flush();
+
+    expect(spoolLines()).toHaveLength(1);
+    expect(forwarder.stats().lastError).toBe('401');
+  });
+
+  it('si presenta con nome e versione del pacchetto', async () => {
+    const forwarder = makeForwarder();
+    forwarder.enqueue(makeEvent('a'));
+    await forwarder.flush();
+
+    expect(userAgent).toMatch(/^@vidiemme\/copilot-proxy\/\d+\.\d+\.\d+/);
+  });
+
+  it('tiene i contatori di consegna', async () => {
+    const forwarder = makeForwarder();
+    forwarder.enqueue(makeEvent('a'));
+    forwarder.enqueue(makeEvent('b'));
+    await forwarder.flush();
+
+    expect(forwarder.stats()).toMatchObject({ recorded: 2, delivered: 2, dropped: 0, lastError: null });
+    expect(forwarder.stats().lastEventAt).not.toBeNull();
   });
 
   it('recupera un invio interrotto da un arresto brusco', async () => {
