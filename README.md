@@ -124,6 +124,17 @@ Aggiornare l'endpoint di raccolta o il salt non richiede quindi di ripassare da 
 si pubblica una versione nuova del pacchetto. Chi ha bisogno di scostarsi dai default ha
 comunque `--collector-url`, `--salt` e `--workspace-roots`.
 
+In modalita' interattiva il setup chiede anche:
+
+- la **porta locale** (default 8787), e verifica che sia libera: se e' occupata da un altro
+  programma si ferma e suggerisce `--port`. Per cambiarla in seguito basta
+  `setup --force --port 9000 --vscode --autostart`: `--force` riparte dalla configurazione
+  esistente, token compreso, e aggiorna editor e avvio automatico;
+- il **nome da mostrare nella dashboard**, proposto da `git config user.name` (e l'email da
+  `user.email`). `-` per restare anonimi; in modo non interattivo valgono `--name`,
+  `--email` e `--anonymous`. Il nome viaggia verso il collector insieme agli eventi, e il
+  collector non lo usa se un amministratore ne ha gia' assegnato uno dalla dashboard.
+
 Con `--vscode` e `--autostart` il rollout per il team e' una sola riga da
 incollare: la prima scrive le impostazioni utente di VS Code, la seconda registra
 il proxy fra i servizi dell'utente. Nessuno deve piu' lanciare `start` a mano ne'
@@ -171,12 +182,19 @@ processi sono visibili con `ps` agli altri utenti della macchina, e finirebbero
 nella cronologia della shell. Il comando lo chiede in modo nascosto, oppure lo
 legge da `COLLECTOR_TOKEN` (utile per un rollout via MDM).
 
-`--vscode` scrive le due impostazioni utente di VS Code, dopo aver salvato un
-`.bak`. Se `settings.json` contiene commenti — legittimo, e' JSONC — il comando
-non lo tocca e stampa lo snippet da incollare a mano.
+`--vscode` scrive le due impostazioni utente in VS Code e nei derivati installati — VS Code
+Insiders, VSCodium, Cursor, Windsurf, Antigravity — dopo aver salvato un `.bak`. Se
+`settings.json` contiene commenti — legittimo, e' JSONC — il comando non lo tocca e stampa
+lo snippet da incollare a mano.
+
+JetBrains (IntelliJ, WebStorm, PhpStorm, Android Studio), Eclipse, Xcode e Visual Studio
+usano il Copilot Language Server, che non ha un URL di override: accetta solo un forward
+proxy HTTP, e misurare quel traffico richiederebbe di decifrare il TLS con una CA locale. Non
+e' implementato (vedi *L'alternativa: TLS interception* piu' sotto): il loro consumo non
+viene misurato.
 
 `doctor` verifica configurazione, cartelle di lavoro, raggiungibilita' e validita'
-del token verso il servizio di raccolta, impostazione di VS Code, eventi rimasti
+del token verso il servizio di raccolta, quali editor passano dal proxy, eventi rimasti
 nello spool e proxy in ascolto. Esce con codice diverso da zero se qualcosa non va.
 Segnala come `WARN`, senza fallire, un proxy in esecuzione di versione diversa da
 quella installata e l'assenza di traffico misurato da oltre 24 ore: e' il sintomo

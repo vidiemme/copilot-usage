@@ -17,7 +17,9 @@ Il progetto viene riconosciuto dal repository git su cui si sta lavorando: nessu
 profilo da cambiare quando si passa da un progetto all'altro.
 
 Non vengono mai salvati prompt ne' risposte: solo contatori. L'identita' della
-persona e' uno pseudonimo, cioe' un hash con salt non invertibile.
+persona e' uno pseudonimo, cioe' un hash con salt non invertibile; il setup
+propone di affiancargli il nome di `git config`, per riconoscersi nella dashboard
+(`--anonymous` per non farlo).
 
 ## Uso
 
@@ -39,10 +41,18 @@ Non c'e' nulla da configurare a mano: endpoint di raccolta, salt e cartelle dove
 cercare i progetti sono gia' nel pacchetto. L'unica cosa da procurarsi e' il
 token di raccolta, che il comando chiede in modo nascosto.
 
-`--vscode` scrive le impostazioni utente di VS Code, `--autostart` registra il
+`--vscode` scrive le impostazioni utente di VS Code e dei derivati installati
+(Insiders, VSCodium, Cursor, Windsurf, Antigravity), `--autostart` registra il
 proxy fra i servizi dell'utente: parte subito e a ogni accesso, senza che nessuno
 debba ricordarsi di lanciarlo. Con entrambe, dopo questo comando non c'e' piu'
 nulla da fare. Il comando stampa come disattivarlo.
+
+Il setup chiede la porta locale (default 8787) e controlla che sia libera. Per
+cambiarla dopo: `setup --force --port 9000 --vscode --autostart`, senza
+reinserire il token.
+
+JetBrains, Eclipse, Xcode e Visual Studio non si possono indirizzare al proxy:
+il loro consumo non viene misurato.
 
 Senza `--autostart` il proxy si avvia a mano:
 
