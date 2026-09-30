@@ -43,8 +43,9 @@ export function inspectRequest(path: string, body: Buffer): RequestFacts {
     sessionId = SESSION_PATTERN.exec(metadata.user_id)?.[1];
   }
 
-  const isOpenAiStyle = path.includes('/chat/completions') || path.includes('/responses');
-  if (stream && isOpenAiStyle && root.stream_options === undefined) {
+  // La Responses API include sempre l'usage in `response.completed` e non
+  // accetta `include_usage`: si tocca solo chat completions.
+  if (stream && path.includes('/chat/completions') && root.stream_options === undefined) {
     root.stream_options = { include_usage: true };
     return { model, sessionId, stream, body: Buffer.from(JSON.stringify(root), 'utf-8') };
   }

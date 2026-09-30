@@ -105,6 +105,81 @@ describe('stream OpenAI / Copilot', () => {
     expect(usage?.inputTokens).toBe(0);
     expect(usage?.cachedInputTokens).toBe(1000);
   });
+
+  it('separa il cache write dal prompt', () => {
+    const usage = readOpenAIUsageBlock({
+      prompt_tokens: 1000,
+      completion_tokens: 10,
+      prompt_tokens_details: { cached_tokens: 600, cache_write_tokens: 300 },
+    });
+
+    expect(usage).toEqual({
+      inputTokens: 100,
+      cachedInputTokens: 600,
+      cacheWriteTokens: 300,
+      outputTokens: 10,
+    });
+  });
+});
+
+describe('stream Responses API', () => {
+  it('legge usage e modello da response.completed', () => {
+    const collector = new UsageCollector(true);
+    collector.push(
+      encoder.encode(
+        sse([
+          {
+            event: 'response.created',
+            data: { type: 'response.created', response: { model: 'gpt-6-sol', usage: null } },
+          },
+          {
+            event: 'response.output_text.delta',
+            data: { type: 'response.output_text.delta', delta: 'ciao' },
+          },
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: {
+                model: 'gpt-6-sol',
+                usage: {
+                  input_tokens: 5000,
+                  input_tokens_details: { cached_tokens: 4000 },
+                  output_tokens: 300,
+                },
+              },
+            },
+          },
+        ]),
+      ),
+    );
+
+    expect(collector.finish()).toEqual({
+      model: 'gpt-6-sol',
+      inputTokens: 1000,
+      cachedInputTokens: 4000,
+      cacheWriteTokens: 0,
+      outputTokens: 300,
+    });
+  });
+
+  it('registra anche le risposte interrotte', () => {
+    const collector = new UsageCollector(true);
+    collector.push(
+      encoder.encode(
+        sse([
+          {
+            data: {
+              type: 'response.incomplete',
+              response: { model: 'gpt-5.4', usage: { input_tokens: 10, output_tokens: 2 } },
+            },
+          },
+        ]),
+      ),
+    );
+
+    expect(collector.finish()).toMatchObject({ model: 'gpt-5.4', inputTokens: 10, outputTokens: 2 });
+  });
 });
 
 describe('risposte non streaming', () => {
