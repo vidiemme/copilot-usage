@@ -21,13 +21,61 @@ export interface DetectedProject {
 
 const MAX_CACHE_ENTRIES = 5_000;
 const MAX_STICKY_ENTRIES = 1_000;
+/** Un remote aggiunto o cambiato deve vedersi senza riavviare il proxy. */
+const CACHE_TTL_MS = 10 * 60_000;
+
+const IS_WINDOWS = sep === '\\';
+
+/** Separatore nel testo: `/`, `\`, oppure le forme escapate in JSON (`\\`, `\/`). */
+const SEPARATOR = '[\\\\/]+';
+/** Caratteri ammessi in un segmento di path, esclusi i separatori. */
+const SEGMENT_CHAR = '[^\\s"\'`,;:*?<>|()\\[\\]{}\\\\/]';
+/** Un segmento puo' contenere spazi singoli: `My Project`. */
+const SEGMENT = `${SEGMENT_CHAR}+(?: ${SEGMENT_CHAR}+)*`;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function normalizeRoot(root: string): string {
-  return root.trim().replace(/[\\/]+$/, '');
+  return normalizePath(root.trim()).replace(/[\\/]+$/, '');
+}
+
+/** Il root puo' comparire come path nativo o dentro un URI `file://` percent-encoded. */
+function rootPattern(root: string): string {
+  return root
+    .split(/[\\/]+/)
+    .map((part) => {
+      const drive = /^([A-Za-z]):$/.exec(part);
+      if (drive) {
+        const letter = drive[1]!;
+        return `[${letter.toUpperCase()}${letter.toLowerCase()}](?::|%3[Aa])`;
+      }
+      return escapeRegExp(part).replace(/ /g, '(?: |%20)');
+    })
+    .join(SEPARATOR);
+}
+
+function decodePercent(value: string): string {
+  if (!value.includes('%')) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+/** Riporta un path trovato nel testo alla forma nativa della piattaforma. */
+function normalizePath(value: string): string {
+  const path = decodePercent(value).replace(/[\\/]+/g, sep);
+  // Da `file:///c:/Users/...` resta `\c:\Users\...`.
+  return IS_WINDOWS ? path.replace(/^\\(?=[A-Za-z]:)/, '') : path;
+}
+
+function startsWithRoot(path: string, root: string): boolean {
+  const head = path.slice(0, root.length);
+  const same = IS_WINDOWS ? head.toLowerCase() === root.toLowerCase() : head === root;
+  return same && path[root.length] === sep;
 }
 
 /**
@@ -48,7 +96,10 @@ export class ProjectDetector {
   private readonly maxScanBytes: number;
   private readonly pattern: RegExp | undefined;
   /** Path candidato -> repository risolto (o `null` se fuori da ogni progetto). */
-  private readonly cache = new Map<string, RepositoryIdentity | null>();
+  private readonly cache = new Map<
+    string,
+    { repository: RepositoryIdentity | null; expiresAt: number }
+  >();
   private readonly sticky = new Map<string, { repository: RepositoryIdentity; expiresAt: number }>();
 
   constructor(options: ProjectDetectorOptions) {
@@ -65,7 +116,7 @@ export class ProjectDetector {
     this.pattern =
       this.roots.length > 0
         ? new RegExp(
-            `(?:${this.roots.map(escapeRegExp).join('|')})(?:/[^\\s"'\`,;:*?<>|()\\[\\]{}\\\\]+)+`,
+            `(?:${this.roots.map(rootPattern).join('|')})(?:${SEPARATOR}${SEGMENT})+`,
             'g',
           )
         : undefined;
@@ -80,7 +131,7 @@ export class ProjectDetector {
    *   il progetto nelle richieste che non citano file (titoli, domande secche).
    */
   detect(body: Buffer, sessionKey: string, now = Date.now()): DetectedProject | undefined {
-    const repository = this.fromBody(body);
+    const repository = this.fromBody(body, now);
 
     if (repository) {
       this.remember(sessionKey, repository, now);
@@ -95,7 +146,7 @@ export class ProjectDetector {
     return undefined;
   }
 
-  private fromBody(body: Buffer): RepositoryIdentity | undefined {
+  private fromBody(body: Buffer, now: number): RepositoryIdentity | undefined {
     if (!this.pattern || body.length === 0) return undefined;
 
     const text = body.toString('utf-8', 0, Math.min(body.length, this.maxScanBytes));
@@ -103,7 +154,7 @@ export class ProjectDetector {
 
     this.pattern.lastIndex = 0;
     for (let match = this.pattern.exec(text); match; match = this.pattern.exec(text)) {
-      candidates.add(match[0]);
+      candidates.add(normalizePath(match[0]));
     }
     if (candidates.size === 0) return undefined;
 
@@ -114,7 +165,7 @@ export class ProjectDetector {
     let bestScore = 0;
 
     for (const candidate of candidates) {
-      const repository = this.projectFor(candidate);
+      const repository = this.projectFor(candidate, now);
       if (!repository) continue;
 
       const score = (scores.get(repository.projectId) ?? 0) + 1;
@@ -129,13 +180,11 @@ export class ProjectDetector {
   }
 
   /** Risale dal path fino al primo marker di progetto, senza uscire dal root. */
-  private projectFor(candidate: string): RepositoryIdentity | undefined {
+  private projectFor(candidate: string, now: number): RepositoryIdentity | undefined {
     const cached = this.cache.get(candidate);
-    if (cached !== undefined) return cached ?? undefined;
+    if (cached && cached.expiresAt > now) return cached.repository ?? undefined;
 
-    const root = this.roots.find(
-      (item) => candidate.startsWith(item) && candidate[item.length] === '/',
-    );
+    const root = this.roots.find((item) => startsWithRoot(candidate, item));
 
     let result: RepositoryIdentity | undefined;
     let directory = candidate;
@@ -150,7 +199,7 @@ export class ProjectDetector {
     }
 
     if (this.cache.size >= MAX_CACHE_ENTRIES) this.cache.clear();
-    this.cache.set(candidate, result ?? null);
+    this.cache.set(candidate, { repository: result ?? null, expiresAt: now + CACHE_TTL_MS });
     return result;
   }
 

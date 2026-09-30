@@ -17,6 +17,7 @@ beforeAll(() => {
   // Cartelle locali dal nome arbitrario: l'identita' deve venire dal remote.
   makeRepo(['acme', 'cartella-a-caso'], 'git@gitlab.com:acme/web/portal.git');
   makeRepo(['crm-locale'], 'https://github.com/acme/legacy-crm.git');
+  makeRepo(['Progetto Cliente'], 'git@gitlab.com:cliente/app.git');
   mkdirSync(join(root, 'scratch', 'notes'), { recursive: true });
 });
 
@@ -96,6 +97,41 @@ describe('ProjectDetector', () => {
 
     expect(instance.detect(body({ text: 'ciao' }), 's:window-1', start + 500)).toBeDefined();
     expect(instance.detect(body({ text: 'ciao' }), 's:window-1', start + 2_000)).toBeUndefined();
+  });
+
+  it('riconosce le cartelle con spazi nel nome', () => {
+    const request = body({ text: `Guarda ${root}/Progetto Cliente/src/main.ts e sistemalo` });
+
+    expect(detector().detect(request, 's:1')?.repository.projectId).toBe('cliente/app');
+  });
+
+  it('riconosce i path dentro URI file:// percent-encoded', () => {
+    const uri = `file://${root}/Progetto Cliente/src/main.ts`.replace(/ /g, '%20');
+
+    expect(detector().detect(body({ uri }), 's:1')?.repository.projectId).toBe('cliente/app');
+  });
+
+  it('riconosce i path con gli slash escapati in JSON', () => {
+    const escaped = `{"path":"${root.replace(/\//g, '\\/')}\\/crm-locale\\/src\\/app.ts"}`;
+
+    expect(detector().detect(Buffer.from(escaped), 's:1')?.repository.projectId).toBe(
+      'acme/legacy-crm',
+    );
+  });
+
+  it('rilegge il repository quando la cache scade', () => {
+    const instance = detector();
+    const start = 1_000_000;
+    mkdirSync(join(root, 'nuovo'), { recursive: true });
+    const request = body({ text: `${root}/nuovo/src/a.ts` });
+
+    expect(instance.detect(request, 's:cache', start)).toBeUndefined();
+
+    makeRepo(['nuovo'], 'git@gitlab.com:acme/nuovo.git');
+    expect(instance.detect(request, 's:cache', start + 1_000)).toBeUndefined();
+    expect(instance.detect(request, 's:cache', start + 11 * 60_000)?.repository.projectId).toBe(
+      'acme/nuovo',
+    );
   });
 
   it('ignora i path fuori dai root configurati', () => {
