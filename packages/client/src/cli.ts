@@ -2,10 +2,11 @@
 import { mkdirSync, readFileSync, writeFileSync, copyFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { parseArgs } from 'node:util';
-import { installAutostart, isAutostartInstalled } from './autostart.js';
+import { installAutostart, isAutostartInstalled, restartAutostart, uninstallAutostart } from './autostart.js';
 import { loadConfig, type ClientConfig, type ConfigSource } from './config.js';
 import { configDir, configFile, vscodeSettingsFile } from './paths.js';
 import { buildApp } from './server.js';
+import { CLIENT_VERSION } from './version.js';
 
 const OVERRIDE_KEY = 'github.copilot.advanced.debug.overrideCapiUrl';
 const AUTH_TYPE_KEY = 'github.copilot.advanced.debug.overrideAuthType';
@@ -14,9 +15,13 @@ const USAGE = `
 Proxy locale che misura il consumo di token di GitHub Copilot e lo attribuisce
 al progetto su cui si sta lavorando.
 
-  npx @vidiemme/copilot-proxy setup     configura la postazione (una volta sola)
-  npx @vidiemme/copilot-proxy start     avvia il proxy
-  npx @vidiemme/copilot-proxy doctor    verifica che tutto sia a posto
+  npx @vidiemme/copilot-proxy setup      configura la postazione (una volta sola)
+  npx @vidiemme/copilot-proxy start      avvia il proxy
+  npx @vidiemme/copilot-proxy doctor     verifica che tutto sia a posto
+  npx @vidiemme/copilot-proxy status     versione, traffico misurato, eventi in attesa
+  npx @vidiemme/copilot-proxy restart    riavvia il servizio (dopo un aggiornamento)
+  npx @vidiemme/copilot-proxy uninstall  rimuove l'avvio automatico
+  npx @vidiemme/copilot-proxy --version
 
 Opzioni di setup:
   --vscode                  scrive anche le impostazioni utente di VS Code
@@ -258,9 +263,12 @@ async function commandStart(flags: Record<string, string | boolean | undefined>)
 }
 
 async function commandDoctor(): Promise<number> {
-  const results: [boolean, string][] = [];
+  const results: [Level, string][] = [];
   const check = (ok: boolean, message: string): void => {
-    results.push([ok, message]);
+    results.push([ok ? 'ok' : 'fail', message]);
+  };
+  const warn = (message: string): void => {
+    results.push(['warn', message]);
   };
 
   let config: ClientConfig;
@@ -331,28 +339,123 @@ async function commandDoctor(): Promise<number> {
 
   // L'avvio automatico interessa solo se il proxy non sta gia' girando: chi
   // preferisce lanciarlo a mano non deve vedere un errore.
-  let proxyUp = false;
-  try {
-    const health = await fetch(`http://127.0.0.1:${config.port}/_health`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    proxyUp = health.ok;
-  } catch {
-    proxyUp = false;
-  }
+  const health = await readHealth(config.port);
+  const proxyUp = health !== undefined;
   check(
     proxyUp,
     proxyUp
-      ? `proxy in ascolto${isAutostartInstalled() ? ', con avvio automatico' : ''}`
+      ? `proxy ${health.version ?? ''} in ascolto${isAutostartInstalled() ? ', con avvio automatico' : ''}`
       : `nessun proxy in ascolto sulla porta ${config.port}: attivalo per sempre con "setup --autostart --force", o una volta sola con "start"`,
   );
 
+  if (health) {
+    if (health.version && health.version !== CLIENT_VERSION) {
+      warn(`il proxy in esecuzione e' la ${health.version}, questo comando la ${CLIENT_VERSION}: lancia "restart"`);
+    }
+    // L'impostazione di VS Code e' di debug: un aggiornamento dell'estensione
+    // puo' ignorarla senza avvisare, e lo si vede solo dall'assenza di traffico.
+    const silence = trafficSilence(health);
+    if (silence) warn(silence);
+  }
+
   report(results);
-  return results.every(([ok]) => ok) ? 0 : 1;
+  return results.every(([level]) => level !== 'fail') ? 0 : 1;
 }
 
-function report(results: [boolean, string][]): void {
-  for (const [ok, message] of results) console.log(`${ok ? 'OK  ' : 'FAIL'} ${message}`);
+type Level = 'ok' | 'warn' | 'fail';
+
+interface ProxyHealth {
+  version?: string;
+  startedAt?: string;
+  spoolBytes?: number;
+  usage?: {
+    recorded: number;
+    delivered: number;
+    dropped: number;
+    lastEventAt: string | null;
+    lastDeliveryAt: string | null;
+    lastError: string | null;
+  };
+}
+
+async function readHealth(port: number): Promise<ProxyHealth | undefined> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/_health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    return response.ok ? ((await response.json()) as ProxyHealth) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const HOUR_MS = 60 * 60 * 1000;
+
+function trafficSilence(health: ProxyHealth, now = Date.now()): string | undefined {
+  const last = health.usage?.lastEventAt;
+  if (last) {
+    const hours = Math.floor((now - Date.parse(last)) / HOUR_MS);
+    return hours >= 24 ? `nessun traffico Copilot misurato nelle ultime ${hours} ore` : undefined;
+  }
+  const uptime = health.startedAt ? now - Date.parse(health.startedAt) : 0;
+  return uptime >= HOUR_MS
+    ? "nessun traffico Copilot misurato dall'avvio del proxy: controlla che l'editor passi davvero di qui"
+    : undefined;
+}
+
+async function commandStatus(): Promise<number> {
+  let config: ClientConfig;
+  try {
+    config = loadConfig(mergedSource({}));
+  } catch (error) {
+    console.error((error as Error).message);
+    return 1;
+  }
+
+  const health = await readHealth(config.port);
+  console.log(`copilot-proxy ${CLIENT_VERSION}`);
+  console.log(`avvio automatico: ${isAutostartInstalled() ? 'attivo' : 'non installato'}`);
+  if (!health) {
+    console.log(`proxy: non in ascolto sulla porta ${config.port}`);
+    return 1;
+  }
+
+  const usage = health.usage;
+  console.log(`proxy: ${health.version ?? '?'} in ascolto dal ${health.startedAt ?? '?'}`);
+  if (usage) {
+    console.log(`eventi misurati: ${usage.recorded}, consegnati: ${usage.delivered}, scartati: ${usage.dropped}`);
+    console.log(`ultimo evento: ${usage.lastEventAt ?? 'nessuno'}`);
+    console.log(`ultima consegna: ${usage.lastDeliveryAt ?? 'nessuna'}`);
+    if (usage.lastError) console.log(`ultimo errore del collector: ${usage.lastError}`);
+  }
+  console.log(`spool: ${health.spoolBytes ?? 0} byte in attesa`);
+  return 0;
+}
+
+function commandRestart(): number {
+  try {
+    restartAutostart();
+  } catch (error) {
+    console.error(`Riavvio non riuscito: ${(error as Error).message}`);
+    return 1;
+  }
+  console.log('Proxy riavviato.');
+  return 0;
+}
+
+function commandUninstall(): number {
+  if (!uninstallAutostart()) {
+    console.log('Avvio automatico non installato: niente da rimuovere.');
+    return 0;
+  }
+  console.log(`Avvio automatico rimosso. Configurazione lasciata in ${configFile()}.`);
+  console.log("Ricordati di togliere le impostazioni del proxy da VS Code, altrimenti Copilot non raggiunge piu' l'upstream.");
+  return 0;
+}
+
+function report(results: [Level, string][]): void {
+  const labels: Record<Level, string> = { ok: 'OK  ', warn: 'WARN', fail: 'FAIL' };
+  for (const [level, message] of results) console.log(`${labels[level]} ${message}`);
 }
 
 function existsDir(path: string): boolean {
@@ -386,10 +489,15 @@ async function main(): Promise<void> {
       autostart: { type: 'boolean' },
       force: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
+      version: { type: 'boolean', short: 'v' },
     },
   });
 
   const command = positionals[0] ?? 'start';
+  if (values.version === true || command === 'version') {
+    console.log(CLIENT_VERSION);
+    return;
+  }
   if (values.help === true || command === 'help') {
     console.log(USAGE);
     return;
@@ -404,6 +512,15 @@ async function main(): Promise<void> {
       return;
     case 'doctor':
       process.exitCode = await commandDoctor();
+      return;
+    case 'status':
+      process.exitCode = await commandStatus();
+      return;
+    case 'restart':
+      process.exitCode = commandRestart();
+      return;
+    case 'uninstall':
+      process.exitCode = commandUninstall();
       return;
     default:
       console.error(`Comando sconosciuto: ${command}\n`);

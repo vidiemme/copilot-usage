@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,11 +69,58 @@ export function installAutostart(): AutostartResult {
 
   // La cache di npx non e' una posizione stabile: `npm cache clean` la svuota e
   // il servizio resterebbe a puntare nel vuoto.
+  const warnings: string[] = [];
   if (entry.includes('/_npx/')) {
-    result.warning =
-      'Il servizio punta dentro la cache di npx, che puo\' essere ripulita. Per un avvio automatico stabile: npm i -g @vidiemme/copilot-proxy, poi rilancia il setup con --autostart';
+    warnings.push(
+      'Il servizio punta dentro la cache di npx, che puo\' essere ripulita. Per un avvio automatico stabile: npm i -g @vidiemme/copilot-proxy, poi rilancia il setup con --autostart',
+    );
   }
+  if (VERSION_MANAGER_PATH.test(process.execPath)) {
+    warnings.push(
+      `Il servizio usa ${process.execPath}, gestito da un version manager: se quella versione di Node viene disinstallata il proxy non riparte. Dopo un cambio di versione rilancia il setup con --autostart --force`,
+    );
+  }
+  if (warnings.length > 0) result.warning = warnings.join('\n');
   return result;
+}
+
+/** Node installato da nvm, fnm, asdf, mise, n o volta: il percorso cambia a ogni versione. */
+const VERSION_MANAGER_PATH =
+  /[\\/](\.nvm|\.?fnm|\.asdf|\.volta[\\/]tools|n[\\/]versions|mise[\\/]installs)[\\/]/;
+
+function launchdTarget(): string {
+  return `gui/${process.getuid?.() ?? ''}/${LABEL}`;
+}
+
+/** Rimuove il servizio; `false` se non era installato. */
+export function uninstallAutostart(): boolean {
+  const file = autostartFile();
+  if (file === undefined || !existsSync(file)) return false;
+
+  try {
+    if (process.platform === 'darwin') {
+      execFileSync('launchctl', ['bootout', launchdTarget()], { stdio: 'ignore' });
+    } else {
+      execFileSync('systemctl', ['--user', 'disable', '--now', UNIT], { stdio: 'ignore' });
+    }
+  } catch {
+    /* gia' fermo */
+  }
+  rmSync(file, { force: true });
+  if (process.platform === 'linux') {
+    execFileSync('systemctl', ['--user', 'daemon-reload'], { stdio: 'ignore' });
+  }
+  return true;
+}
+
+/** Riavvia il servizio, ad esempio dopo un aggiornamento del pacchetto. */
+export function restartAutostart(): void {
+  if (!isAutostartInstalled()) throw new Error('avvio automatico non installato');
+  if (process.platform === 'darwin') {
+    execFileSync('launchctl', ['kickstart', '-k', launchdTarget()], { stdio: 'pipe' });
+  } else {
+    execFileSync('systemctl', ['--user', 'restart', UNIT], { stdio: 'pipe' });
+  }
 }
 
 function installLaunchd(file: string, entry: string): AutostartResult {
