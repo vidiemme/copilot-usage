@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=22.9"
+    "node": ">=22.12"
   },
   "scripts": {
     "build": "tsc -b",
@@ -18,12 +18,13 @@
     "smoke": "npm run smoke -w @vidiemme/copilot-proxy",
     "verify-detection": "npm run verify-detection -w @vidiemme/copilot-proxy",
     "verify-e2e": "npm run verify-e2e -w @vidiemme/copilot-proxy",
-    "release": "npm run typecheck && npm test && npm publish -w @vidiemme/copilot-usage-contract && npm publish -w @vidiemme/copilot-proxy"
+    "release": "npm run typecheck && npm test && npm run publish-contract && npm publish -w @vidiemme/copilot-proxy",
+    "publish-contract": "npm view @vidiemme/copilot-usage-contract@$(node -p \"require('./packages/shared/package.json').version\") version >/dev/null 2>&1 && echo 'contratto gia pubblicato, salto' || npm publish -w @vidiemme/copilot-usage-contract"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.3",
-    "vitest": "^3.0.4"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
   }
 }
