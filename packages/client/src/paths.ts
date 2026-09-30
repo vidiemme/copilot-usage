@@ -28,15 +28,3 @@ export function configFile(): string {
 export function defaultSpoolPath(): string {
   return join(configDir(), 'spool.jsonl');
 }
-
-/** Percorso del `settings.json` utente di VS Code, per la piattaforma corrente. */
-export function vscodeSettingsFile(): string {
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA?.trim() ?? join(homedir(), 'AppData', 'Roaming');
-    return join(appData, 'Code', 'User', 'settings.json');
-  }
-  if (process.platform === 'darwin') {
-    return join(homedir(), 'Library', 'Application Support', 'Code', 'User', 'settings.json');
-  }
-  return join(homedir(), '.config', 'Code', 'User', 'settings.json');
-}

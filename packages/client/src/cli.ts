@@ -1,15 +1,24 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, writeFileSync, copyFileSync, statSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { installAutostart, isAutostartInstalled, restartAutostart, uninstallAutostart } from './autostart.js';
 import { loadConfig, type ClientConfig, type ConfigSource } from './config.js';
-import { configDir, configFile, vscodeSettingsFile } from './paths.js';
+import {
+  applyEditorSettings,
+  editorSnippet,
+  installedEditors,
+  knownEditors,
+  pointsToProxy,
+  readOverride,
+  type Editor,
+} from './editors.js';
+import { configDir, configFile } from './paths.js';
 import { buildApp } from './server.js';
+import { gitIdentity, portStatus } from './setupHelpers.js';
 import { CLIENT_VERSION } from './version.js';
 
-const OVERRIDE_KEY = 'github.copilot.advanced.debug.overrideCapiUrl';
-const AUTH_TYPE_KEY = 'github.copilot.advanced.debug.overrideAuthType';
+const DEFAULT_PORT = 8787;
 
 const USAGE = `
 Proxy locale che misura il consumo di token di GitHub Copilot e lo attribuisce
@@ -24,14 +33,22 @@ al progetto su cui si sta lavorando.
   npx @vidiemme/copilot-proxy --version
 
 Opzioni di setup:
-  --vscode                  scrive anche le impostazioni utente di VS Code
+  --vscode                  scrive le impostazioni di VS Code e derivati (Insiders,
+                            VSCodium, Cursor, Windsurf, Antigravity) installati
   --autostart               avvia il proxy a ogni accesso, senza doverlo lanciare
+  --port <n>                porta locale del proxy (default 8787; chiesta se interattivo)
+  --name <nome>             nome da mostrare nella dashboard (default: git user.name)
+  --email <email>           email associata (default: git user.email)
+  --anonymous               non inviare nome ed email: resta solo lo pseudonimo
   --workspace-roots <a,b>   cartelle sotto cui vivono i repository (default: la home)
-  --port <n>                porta locale del proxy (default 8787)
   --collector-url <url>     endpoint di raccolta, se diverso da quello aziendale
   --salt <valore>           salt degli pseudonimi, se diverso da quello aziendale
   --upstream <url>          endpoint Copilot (default https://api.githubcopilot.com)
-  --force                   sovrascrive una configurazione esistente
+  --force                   rifa' il setup partendo dalla configurazione esistente
+                            (token compreso: per cambiare porta basta --force --port)
+
+JetBrains, Eclipse, Xcode, Android Studio e Visual Studio non hanno un modo per
+indirizzare Copilot al proxy: il loro traffico non viene misurato.
 
 L'unica cosa da procurarsi e' il token di raccolta, uguale per tutta l'azienda.
 Non si passa come opzione: finirebbe nella cronologia della shell e nella lista
@@ -128,15 +145,43 @@ function promptSecret(question: string): Promise<string> {
   });
 }
 
+async function promptLine(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return (await rl.question(question)).trim();
+  } finally {
+    rl.close();
+  }
+}
+
+function validPort(value: string): boolean {
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
+function setOrDelete(values: Record<string, string>, key: string, value: string | undefined): void {
+  if (value) values[key] = value;
+  else delete values[key];
+}
+
 async function commandSetup(flags: Record<string, string | boolean | undefined>): Promise<number> {
   const existing = readConfigFile();
-  if (Object.keys(existing).length > 0 && flags.force !== true) {
-    console.error(`Esiste gia' ${configFile()}. Rilancia con --force per sostituirlo.`);
+  const reconfigure = Object.keys(existing).length > 0;
+  if (reconfigure && flags.force !== true) {
+    console.error(`Esiste gia' ${configFile()}. Rilancia con --force per modificarlo.`);
     return 1;
   }
+  const interactive = process.stdin.isTTY === true;
 
-  const token = process.env.COLLECTOR_TOKEN ?? (await promptSecret('Token di raccolta: '));
-  if (token.trim().length === 0) {
+  // Con --force si parte dalla configurazione esistente: cambiare porta non deve costare il token.
+  const values: Record<string, string> = {};
+  for (const [key, value] of Object.entries(existing)) if (value !== undefined) values[key] = value;
+
+  const token =
+    process.env.COLLECTOR_TOKEN?.trim() ||
+    values.COLLECTOR_TOKEN ||
+    (await promptSecret('Token di raccolta: ')).trim();
+  if (token.length === 0) {
     console.error('Token vuoto.');
     return 1;
   }
@@ -144,15 +189,42 @@ async function commandSetup(flags: Record<string, string | boolean | undefined>)
   // Si scrive solo cio' che si discosta dai default del pacchetto: un file
   // corto e' un file che si capisce, e i default restano aggiornabili con una
   // nuova versione invece che postazione per postazione.
-  const values: Record<string, string> = { COLLECTOR_TOKEN: token.trim() };
+  values.COLLECTOR_TOKEN = token;
   const collectorUrl = flags['collector-url'] as string | undefined;
   if (collectorUrl) values.COLLECTOR_URL = collectorUrl;
   const salt = flags.salt as string | undefined;
   if (salt) values.DEVELOPER_ID_SALT = salt;
   const workspaceRoots = flags['workspace-roots'] as string | undefined;
   if (workspaceRoots) values.WORKSPACE_ROOTS = workspaceRoots;
-  if (flags.port) values.PORT = String(flags.port);
   if (flags.upstream) values.UPSTREAM_BASE_URL = String(flags.upstream);
+
+  let port = flags.port ? String(flags.port) : values.PORT;
+  if (!port && interactive) {
+    port = (await promptLine(`Porta locale del proxy [${DEFAULT_PORT}]: `)) || undefined;
+  }
+  if (port && !validPort(port)) {
+    console.error(`Porta non valida: ${port}. Serve un intero fra 1 e 65535.`);
+    return 1;
+  }
+  setOrDelete(values, 'PORT', port && Number(port) !== DEFAULT_PORT ? String(Number(port)) : undefined);
+
+  if (flags.anonymous === true) {
+    setOrDelete(values, 'DEVELOPER_NAME', undefined);
+    setOrDelete(values, 'DEVELOPER_EMAIL', undefined);
+  } else {
+    const git = gitIdentity();
+    let name = (flags.name as string | undefined) ?? values.DEVELOPER_NAME ?? git.name;
+    const email = (flags.email as string | undefined) ?? values.DEVELOPER_EMAIL ?? git.email;
+    if (interactive && flags.name === undefined) {
+      const answer = await promptLine(
+        `Nome da mostrare nella dashboard [${name ?? 'nessuno'}] ("-" per restare anonimo): `,
+      );
+      if (answer === '-') name = undefined;
+      else if (answer) name = answer;
+    }
+    setOrDelete(values, 'DEVELOPER_NAME', name?.slice(0, 100));
+    setOrDelete(values, 'DEVELOPER_EMAIL', name ? email?.slice(0, 200) : undefined);
+  }
 
   // Meglio scoprire ora che la configurazione non regge, non al primo avvio.
   let config: ClientConfig;
@@ -163,13 +235,26 @@ async function commandSetup(flags: Record<string, string | boolean | undefined>)
     return 1;
   }
 
+  if ((await portStatus(config.port, config.host)) === 'busy') {
+    console.error(
+      `La porta ${config.port} e' occupata da un altro programma. Scegline un'altra con --port <n>.`,
+    );
+    return 1;
+  }
+
   writeConfigFile(values);
   console.log(`Scritto ${configFile()}`);
+  console.log(`Proxy su http://127.0.0.1:${config.port}`);
   console.log(`Raccolta verso ${config.collectorUrl}`);
   console.log(`Progetti cercati sotto ${config.workspaceRoots.join(', ')}`);
+  console.log(
+    config.developerName
+      ? `Nella dashboard comparirai come ${config.developerName}`
+      : 'Nella dashboard comparirai con uno pseudonimo',
+  );
 
-  if (flags.vscode === true) applyVsCodeSettings(config.port);
-  else printVsCodeSettings(config.port);
+  if (flags.vscode === true) applyEditors(config.port);
+  else printEditorSettings(config.port);
 
   if (flags.autostart === true) {
     try {
@@ -189,42 +274,33 @@ async function commandSetup(flags: Record<string, string | boolean | undefined>)
   return 0;
 }
 
-function vsCodeSnippet(port: number): Record<string, string> {
-  return { [OVERRIDE_KEY]: `http://127.0.0.1:${port}`, [AUTH_TYPE_KEY]: 'token' };
-}
-
-function printVsCodeSettings(port: number): void {
+function printEditorSettings(port: number, editor?: Editor): void {
   console.log(
-    '\nAggiungi alle impostazioni utente di VS Code (Preferences: Open User Settings (JSON)):\n' +
-      `${JSON.stringify(vsCodeSnippet(port), null, 2)}\n` +
-      'Oppure rilancia il setup con --vscode per farlo scrivere al comando.',
+    `\nAggiungi alle impostazioni utente di ${editor?.name ?? 'VS Code (e dei suoi derivati)'} (Preferences: Open User Settings (JSON)):\n` +
+      `${JSON.stringify(editorSnippet(port), null, 2)}\n` +
+      (editor ? '' : 'Oppure rilancia il setup con --vscode per farlo scrivere al comando.'),
   );
 }
 
-function applyVsCodeSettings(port: number): void {
-  const file = vscodeSettingsFile();
+function applyEditors(port: number): void {
+  const found = installedEditors();
+  // Nessun editor ancora aperto: si prepara VS Code, che e' il caso piu' comune.
+  const targets = found.length > 0 ? found : knownEditors().slice(0, 1);
 
-  let current: Record<string, unknown> = {};
-  let exists = true;
-  try {
-    const raw = readFileSync(file, 'utf-8');
-    // `settings.json` ammette commenti e virgole finali: se non e' JSON puro,
-    // riscriverlo lo distruggerebbe. Meglio arrendersi e dire cosa aggiungere.
-    current = JSON.parse(raw) as Record<string, unknown>;
-    copyFileSync(file, `${file}.bak`);
-  } catch (error) {
-    exists = (error as NodeJS.ErrnoException).code !== 'ENOENT';
-    if (exists) {
-      console.log(`\nNon riesco a modificare ${file} senza rischiare di rovinarlo (contiene commenti o non e' JSON valido).`);
-      printVsCodeSettings(port);
-      return;
+  for (const editor of targets) {
+    const result = applyEditorSettings(editor, port);
+    if (result.status === 'unparsable') {
+      console.log(
+        `\n${editor.name}: non riesco a modificare ${editor.settingsFile} senza rischiare di rovinarlo (contiene commenti o non e' JSON valido).`,
+      );
+      printEditorSettings(port, editor);
+      continue;
     }
+    console.log(
+      `${editor.name}: aggiornato ${editor.settingsFile}${result.backup ? ` (backup in ${result.backup})` : ''}`,
+    );
   }
-
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify({ ...current, ...vsCodeSnippet(port) }, null, 2)}\n`);
-  console.log(`Aggiornato ${file}${exists ? ` (backup in ${file}.bak)` : ''}`);
-  console.log("Riavvia VS Code perche' le impostazioni abbiano effetto.");
+  console.log("Riavvia gli editor perche' le impostazioni abbiano effetto.");
 }
 
 async function commandStart(flags: Record<string, string | boolean | undefined>): Promise<number> {
@@ -314,24 +390,27 @@ async function commandDoctor(): Promise<number> {
     check(false, `servizio di raccolta irraggiungibile: ${(error as Error).message}`);
   }
 
-  // Ricerca testuale e non `JSON.parse`: `settings.json` ammette commenti e
-  // virgole finali, e una diagnostica non deve fallire per quello.
-  try {
-    const raw = readFileSync(vscodeSettingsFile(), 'utf-8');
-    const match = new RegExp(`"${OVERRIDE_KEY.replace(/\./g, '\\.')}"\\s*:\\s*"([^"]*)"`).exec(raw);
-    const expected = `http://127.0.0.1:${config.port}`;
-    // `localhost` e `127.0.0.1` sono equivalenti: non vale la pena segnalarlo.
-    const ok = match !== null && new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${config.port}/?$`).test(match[1] ?? '');
+  // Basta un editor che punti al proxy; gli altri sono solo segnalati, perche'
+  // non tutti usano Copilot in ogni editor installato.
+  const editors = installedEditors();
+  const expected = `http://127.0.0.1:${config.port}`;
+  const configured: string[] = [];
+  const notConfigured: string[] = [];
+  for (const editor of editors) {
+    const value = readOverride(editor);
+    if (value && pointsToProxy(value, config.port)) configured.push(editor.name);
+    else notConfigured.push(value ? `${editor.name} (punta a ${value}, atteso ${expected})` : editor.name);
+  }
+  if (configured.length > 0) {
+    check(true, `passano dal proxy: ${configured.join(', ')}`);
+    if (notConfigured.length > 0) warn(`non passano dal proxy: ${notConfigured.join(', ')}`);
+  } else {
     check(
-      ok,
-      ok
-        ? `VS Code punta al proxy (${match?.[1] ?? expected})`
-        : match
-          ? `VS Code punta a ${match[1]}, atteso ${expected}`
-          : "VS Code non e' configurato per passare dal proxy",
+      false,
+      editors.length > 0
+        ? `nessun editor passa dal proxy (${notConfigured.join(', ')}): rilancia "setup --vscode --force"`
+        : 'nessun editor della famiglia VS Code trovato su questa macchina',
     );
-  } catch {
-    check(false, `impostazioni di VS Code non trovate in ${vscodeSettingsFile()}`);
   }
 
   const pending = spoolSize(config.spoolPath);
@@ -414,6 +493,7 @@ async function commandStatus(): Promise<number> {
 
   const health = await readHealth(config.port);
   console.log(`copilot-proxy ${CLIENT_VERSION}`);
+  console.log(`nome in dashboard: ${config.developerName ?? 'nessuno (pseudonimo)'}`);
   console.log(`avvio automatico: ${isAutostartInstalled() ? 'attivo' : 'non installato'}`);
   if (!health) {
     console.log(`proxy: non in ascolto sulla porta ${config.port}`);
@@ -485,6 +565,9 @@ async function main(): Promise<void> {
       port: { type: 'string' },
       upstream: { type: 'string' },
       'log-level': { type: 'string' },
+      name: { type: 'string' },
+      email: { type: 'string' },
+      anonymous: { type: 'boolean' },
       vscode: { type: 'boolean' },
       autostart: { type: 'boolean' },
       force: { type: 'boolean' },
