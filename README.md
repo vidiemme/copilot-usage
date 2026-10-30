@@ -89,7 +89,7 @@ parte, cosi' ognuno ha la sua tariffa.
 
 ## Avvio
 
-Serve Node >= 22.9.
+Serve Node >= 22.19 (richiesto da Undici 8).
 
 ### 1. Il servizio di raccolta
 

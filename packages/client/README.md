@@ -69,5 +69,5 @@ La configurazione finisce in `~/.config/copilot-proxy/config.json` con permessi
 
 ## Requisiti
 
-Node.js >= 22.9 e il token di ingest del servizio di raccolta: chiedilo a chi lo
+Node.js >= 22.19 (richiesto da Undici 8) e il token di ingest del servizio di raccolta: chiedilo a chi lo
 amministra, e' lo stesso per tutta l'organizzazione.

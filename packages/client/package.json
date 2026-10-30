@@ -26,7 +26,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=22.9"
+    "node": ">=22.19"
   },
   "scripts": {
     "build": "tsc -b",
@@ -39,11 +39,11 @@
   },
   "dependencies": {
     "@vidiemme/copilot-usage-contract": "^0.1.0",
-    "fastify": "^5.12.5",
-    "undici": "^7.30.0"
+    "fastify": "^5.12.7",
+    "undici": "^8.12.3"
   },
   "devDependencies": {
-    "@types/node": "^22.10.7",
+    "@types/node": "^22.20.5",
     "tsx": "^4.19.2",
     "typescript": "^7.0.2"
   }

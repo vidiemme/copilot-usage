@@ -14,7 +14,7 @@ jobs:
     strategy:
       matrix:
         # Il minimo supportato dalle postazioni e l'LTS corrente.
-        node-version: ['22', '24']
+        node-version: ['22.19.0', '22', '24']
     steps:
       - uses: actions/checkout@v6
 

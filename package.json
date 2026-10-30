@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "engines": {
-    "node": ">=22.12"
+    "node": ">=22.19"
   },
   "scripts": {
     "build": "tsc -b",
@@ -22,9 +22,9 @@
     "publish-contract": "npm view @vidiemme/copilot-usage-contract@$(node -p \"require('./packages/shared/package.json').version\") version >/dev/null 2>&1 && echo 'contratto gia pubblicato, salto' || npm publish -w @vidiemme/copilot-usage-contract"
   },
   "devDependencies": {
-    "@types/node": "^22.10.7",
+    "@types/node": "^22.20.5",
     "tsx": "^4.19.2",
     "typescript": "^7.0.2",
-    "vitest": "^5.0.2"
+    "vitest": "^5.0.5"
   }
 }
