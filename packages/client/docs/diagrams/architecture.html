@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copilot Proxy - architettura</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #fafaf7; color: #000000; font-family: 'Geist', sans-serif; }
+    .frame { width: 960px; max-width: 100%; min-width: 0; margin: auto; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .heading { font-family: 'Instrument Serif', serif; font-size: 28px; font-weight: 400; }
+    .name { font-family: 'Geist', sans-serif; font-size: 12px; font-weight: 600; }
+    .detail { font-family: 'Geist Mono', monospace; font-size: 9px; fill: #666666; }
+    .tag, .label { font-family: 'Geist Mono', monospace; font-size: 8px; fill: #666666; letter-spacing: 0.06em; }
+    .note { font-family: 'Geist', sans-serif; font-size: 11px; fill: #666666; }
+    .box { fill: #fafaf7; stroke: #bfbfbc; stroke-width: 1; }
+    .http { fill: none; stroke: #000000; stroke-width: 1.2; marker-end: url(#arrow-link); }
+    .async { fill: none; stroke: #666666; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow); }
+    footer { margin-top: 16px; font-size: 11px; color: #666666; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="architecture-title architecture-desc">
+        <title id="architecture-title">Copilot Proxy: traffico locale e raccolta separata</title>
+        <desc id="architecture-desc">Editor e CLI raggiungono Copilot attraverso il proxy locale, che rileva il repository e invia solo eventi di consumo al collector, usando lo spool per i ritentativi.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#666666"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000000"/></marker>
+        </defs>
+        <rect width="960" height="600" fill="#fafaf7"/>
+        <text x="40" y="40" class="tag">BIP RED / COPILOT PROXY / ARCHITETTURA</text>
+        <text x="40" y="80" class="heading">La conversazione va a Copilot. La misura al collector.</text>
+        <rect x="40" y="116" width="584" height="360" rx="8" fill="#f0f0ed" stroke="#bfbfbc" stroke-dasharray="4,4"/>
+        <text x="64" y="144" class="tag">MACCHINA DEL DEVELOPER</text>
+        <text x="704" y="144" class="tag">SERVIZI REMOTI</text>
+
+        <path d="M256 200 H352" class="http"/>
+        <path d="M352 232 H256" class="http"/>
+        <path d="M576 200 H704" class="http"/>
+        <path d="M704 232 H576" class="http"/>
+        <path d="M256 396 H288 Q296 396 296 388 V284 Q296 276 304 276 H400 Q408 276 408 268 V256" fill="none" stroke="#666666" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <path d="M464 256 V356" class="async"/>
+        <path d="M520 256 V280 Q520 288 528 288 H800 Q808 288 808 296 V356" class="async"/>
+        <path d="M576 396 H704" class="async"/>
+
+        <rect x="268" y="172" width="72" height="20" fill="#fafaf7"/>
+        <text x="304" y="185" text-anchor="middle" class="label">RICHIESTA</text>
+        <rect x="268" y="240" width="72" height="20" fill="#fafaf7"/>
+        <text x="304" y="253" text-anchor="middle" class="label">RISPOSTA</text>
+        <rect x="604" y="172" width="72" height="20" fill="#fafaf7"/>
+        <text x="640" y="185" text-anchor="middle" class="label">HTTPS</text>
+        <rect x="604" y="240" width="72" height="20" fill="#fafaf7"/>
+        <text x="640" y="253" text-anchor="middle" class="label">STREAM / JSON</text>
+        <rect x="472" y="304" width="92" height="20" fill="#fafaf7"/>
+        <text x="518" y="317" text-anchor="middle" class="label">SE NON INVIATO</text>
+        <rect x="604" y="260" width="120" height="20" fill="#fafaf7"/>
+        <text x="664" y="273" text-anchor="middle" class="label">EVENTI HTTPS</text>
+        <rect x="608" y="368" width="64" height="20" fill="#fafaf7"/>
+        <text x="640" y="381" text-anchor="middle" class="label">RETRY</text>
+
+        <rect x="64" y="176" width="192" height="80" rx="6" class="box"/>
+        <text x="80" y="196" class="tag">CLIENT</text>
+        <text x="80" y="220" class="name">Editor / CLI compatibile</text>
+        <text x="80" y="240" class="detail">base URL: 127.0.0.1:8787</text>
+
+        <rect x="352" y="176" width="224" height="80" rx="6" fill="#fafaf7" stroke="#ff0005" stroke-width="2"/>
+        <text x="368" y="196" class="tag">PROXY LOCALE</text>
+        <text x="368" y="220" class="name">@vidiemme/copilot-proxy</text>
+        <text x="368" y="240" class="detail">attribuisce + estrae usage</text>
+
+        <rect x="704" y="176" width="208" height="80" rx="6" class="box"/>
+        <text x="720" y="196" class="tag">UPSTREAM</text>
+        <text x="720" y="220" class="name">GitHub Copilot</text>
+        <text x="720" y="240" class="detail">api.githubcopilot.com</text>
+
+        <rect x="64" y="356" width="192" height="80" rx="6" class="box"/>
+        <text x="80" y="376" class="tag">CONTESTO LOCALE</text>
+        <text x="80" y="400" class="name">Repository del progetto</text>
+        <text x="80" y="420" class="detail">path + marker + remote Git</text>
+
+        <rect x="352" y="356" width="224" height="80" rx="6" class="box"/>
+        <text x="368" y="376" class="tag">STATO SU DISCO</text>
+        <text x="368" y="400" class="name">Spool locale</text>
+        <text x="368" y="420" class="detail">eventi in attesa, non prompt</text>
+
+        <rect x="704" y="356" width="208" height="80" rx="6" class="box"/>
+        <text x="720" y="376" class="tag">RACCOLTA CENTRALE</text>
+        <text x="720" y="400" class="name">Collector compatibile</text>
+        <text x="720" y="420" class="detail">prezzi + deduplica + dati</text>
+
+        <text x="64" y="460" class="note">Il parser legge in memoria; il proxy non persiste prompt o risposte.</text>
+        <text x="704" y="460" class="note">Nessun token Copilot al collector.</text>
+        <line x1="40" y1="520" x2="920" y2="520" stroke="#bfbfbc"/>
+        <line x1="40" y1="548" x2="72" y2="548" stroke="#000000"/>
+        <text x="84" y="552" class="note">Richieste e risposte</text>
+        <line x1="280" y1="548" x2="312" y2="548" stroke="#666666"/>
+        <text x="324" y="552" class="note">Rilevamento locale</text>
+        <line x1="528" y1="548" x2="560" y2="548" stroke="#666666" stroke-dasharray="5,4"/>
+        <text x="572" y="552" class="note">Invio asincrono / retry</text>
+        <rect x="800" y="540" width="16" height="16" rx="2" fill="#fafaf7" stroke="#ff0005"/>
+        <text x="828" y="552" class="note">Pacchetto npm</text>
+      </svg>
+    </div>
+    <footer>Palette da bip.red (30 ottobre 2026), fondo e grigi adattati per contrasto. PolySans non incluso: Instrument Serif, Geist e Geist Mono sono fallback dichiarati. Diagram Design, doc-inline, statico.</footer>
+  </main>
+</body>
+</html>

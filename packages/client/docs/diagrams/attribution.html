@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copilot Proxy - attribuzione del progetto</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #fafaf7; color: #000000; font-family: 'Geist', sans-serif; }
+    .frame { width: 960px; max-width: 100%; min-width: 0; margin: auto; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .heading { font-family: 'Instrument Serif', serif; font-size: 28px; font-weight: 400; }
+    .name { font-family: 'Geist', sans-serif; font-size: 12px; font-weight: 600; }
+    .detail { font-family: 'Geist Mono', monospace; font-size: 9px; fill: #666666; }
+    .tag, .label { font-family: 'Geist Mono', monospace; font-size: 8px; fill: #666666; letter-spacing: 0.06em; }
+    .note { font-family: 'Geist', sans-serif; font-size: 11px; fill: #666666; }
+    .decision { fill: #f0f0ed; stroke: #666666; }
+    .terminal { fill: #fafaf7; stroke: #bfbfbc; }
+    .edge { fill: none; stroke: #666666; stroke-width: 1.2; marker-end: url(#arrow); }
+    footer { margin-top: 16px; font-size: 11px; color: #666666; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="attribution-title attribution-desc">
+        <title id="attribution-title">Come viene scelto il progetto</title>
+        <desc id="attribution-desc">Il proxy cerca prima un identificatore esplicito, poi un repository nei path locali, poi il progetto gia' rilevato per la sessione e infine usa unassigned.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#666666"/></marker>
+        </defs>
+        <rect width="960" height="600" fill="#fafaf7"/>
+        <text x="40" y="40" class="tag">BIP RED / COPILOT PROXY / ATTRIBUZIONE</text>
+        <text x="40" y="80" class="heading">Prima i segnali espliciti. Poi il contesto locale.</text>
+
+        <path d="M400 144 V168" class="edge"/>
+        <path d="M520 208 H672" class="edge"/>
+        <path d="M400 248 V272" class="edge"/>
+        <path d="M520 312 H672" class="edge"/>
+        <path d="M400 352 V376" class="edge"/>
+        <path d="M520 416 H672" class="edge"/>
+        <path d="M400 456 V480" class="edge"/>
+
+        <rect x="568" y="180" width="56" height="20" fill="#fafaf7"/>
+        <text x="596" y="193" text-anchor="middle" class="label">SI</text>
+        <rect x="568" y="284" width="56" height="20" fill="#fafaf7"/>
+        <text x="596" y="297" text-anchor="middle" class="label">SI</text>
+        <rect x="568" y="388" width="56" height="20" fill="#fafaf7"/>
+        <text x="596" y="401" text-anchor="middle" class="label">SI</text>
+        <rect x="408" y="248" width="40" height="20" fill="#fafaf7"/>
+        <text x="428" y="261" text-anchor="middle" class="label">NO</text>
+        <rect x="408" y="352" width="40" height="20" fill="#fafaf7"/>
+        <text x="428" y="365" text-anchor="middle" class="label">NO</text>
+        <rect x="408" y="456" width="40" height="20" fill="#fafaf7"/>
+        <text x="428" y="469" text-anchor="middle" class="label">NO</text>
+
+        <rect x="304" y="96" width="192" height="48" rx="20" class="terminal"/>
+        <text x="400" y="124" text-anchor="middle" class="name">Richiesta al proxy</text>
+
+        <polygon points="400,168 520,208 400,248 280,208" class="decision"/>
+        <text x="400" y="204" text-anchor="middle" class="name">Segnale esplicito?</text>
+        <text x="400" y="224" text-anchor="middle" class="detail">ordine in tabella</text>
+        <rect x="672" y="176" width="224" height="64" rx="20" class="terminal"/>
+        <text x="784" y="204" text-anchor="middle" class="name">ID dichiarato</text>
+        <text x="784" y="224" text-anchor="middle" class="detail">path / header / proxy-auth / token</text>
+
+        <polygon points="400,272 520,312 400,352 280,312" class="decision"/>
+        <text x="400" y="308" text-anchor="middle" class="name">Path risolvibili?</text>
+        <text x="400" y="328" text-anchor="middle" class="detail">dentro WORKSPACE_ROOTS</text>
+        <rect x="672" y="280" width="224" height="64" rx="20" fill="#fafaf7" stroke="#ff0005" stroke-width="2"/>
+        <text x="784" y="308" text-anchor="middle" class="name">Identita' del repository</text>
+        <text x="784" y="328" text-anchor="middle" class="detail">remote Git o nome cartella</text>
+
+        <polygon points="400,376 520,416 400,456 280,416" class="decision"/>
+        <text x="400" y="412" text-anchor="middle" class="name">Sessione valida?</text>
+        <text x="400" y="432" text-anchor="middle" class="detail">TTL: 30 minuti</text>
+        <rect x="672" y="384" width="224" height="64" rx="20" class="terminal"/>
+        <text x="784" y="412" text-anchor="middle" class="name">Ultimo progetto rilevato</text>
+        <text x="784" y="432" text-anchor="middle" class="detail">source: session</text>
+
+        <rect x="304" y="480" width="192" height="48" rx="20" class="terminal"/>
+        <text x="400" y="508" text-anchor="middle" class="name">unassigned</text>
+
+        <text x="40" y="188" class="note">La precedenza completa</text>
+        <text x="40" y="208" class="note">e' nella tabella del README.</text>
+        <text x="40" y="292" class="note">Con piu' repository vince</text>
+        <text x="40" y="312" class="note">quello con piu' path distinti.</text>
+        <text x="40" y="396" class="note">Senza ID sessione si usa</text>
+        <text x="40" y="416" class="note">il developer come chiave.</text>
+
+        <line x1="40" y1="552" x2="920" y2="552" stroke="#bfbfbc"/>
+        <text x="40" y="580" class="note">Rombo: decisione</text>
+        <text x="240" y="580" class="note">Ovale: ingresso o risultato</text>
+        <rect x="520" y="568" width="16" height="16" rx="2" fill="#fafaf7" stroke="#ff0005"/>
+        <text x="548" y="580" class="note">Rilevamento automatico</text>
+        <text x="784" y="580" class="detail">source: fallback</text>
+      </svg>
+    </div>
+    <footer>Palette da bip.red (30 ottobre 2026), fondo e grigi adattati per contrasto. PolySans non incluso: Instrument Serif, Geist e Geist Mono sono fallback dichiarati. Diagram Design, doc-inline, statico; nessun pattern semantico aggiuntivo.</footer>
+  </main>
+</body>
+</html>
