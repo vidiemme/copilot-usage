@@ -17,7 +17,8 @@ costo aziendali.
 | Client | Attribuzione |
 | --- | --- |
 | Claude Code, Codex e altri CLI agentici | **per progetto** e per developer |
-| Copilot Chat in VS Code / Visual Studio | **per progetto** e per developer, dedotto dai path |
+| Copilot Chat in VS Code e derivati (Cursor, Windsurf, Antigravity, ...) | **per progetto** e per developer, dedotto dai path |
+| Harness che arrivano a Copilot tramite un proprio proxy (`copilot-api`, LiteLLM, ...) | **per progetto** e per developer, se quel proxy permette di cambiare l'URL di Copilot: vedi [Harness e proxy intermedi](#harness-e-proxy-intermedi-verso-copilot) |
 
 ## Le due parti
 
@@ -488,6 +489,78 @@ terminazione TLS su `*.githubcopilot.com` e CA aziendale sulle macchine. **Non e
 qui**, e prima di percorrerlo considera che in Italia ricade nell'art. 4 dello Statuto dei
 Lavoratori: va concordato con HR/legale e comunicato ai developer. Anche cosi', restando
 `http.proxy` di scope applicazione, non otterresti comunque il progetto.
+
+## Harness e proxy intermedi verso Copilot
+
+C'e' chi usa un harness (Claude Code, OpenCode, Cline, Aider, ...) che non parla con Copilot
+direttamente ma tramite un proprio proxy (`copilot-api`, LiteLLM o simili): e' quel proxy a
+ottenere il token Copilot, tradurre il formato e chiamare `api.githubcopilot.com`. Il consumo
+finisce comunque nella fattura Copilot, quindi va misurato.
+
+Il modo giusto e' mettere `copilot-proxy` **subito prima di Copilot**, cioe' come ultimo anello:
+
+```
+harness  ->  proxy intermedio  ->  copilot-proxy (127.0.0.1:8787)  ->  api.githubcopilot.com
+```
+
+In questa posizione `copilot-proxy` vede le richieste gia' in formato Copilot, con il token
+Copilot vero, esattamente come quelle di VS Code: lo pseudonimo del developer e' stabile, il
+modello registrato e' quello che Copilot fattura, e la stessa istanza continua a servire anche
+VS Code senza toccare `UPSTREAM_BASE_URL`.
+
+### Configurazione
+
+1. Installa e avvia `copilot-proxy` come al solito (`setup --autostart`).
+2. Nel proxy intermedio, imposta come URL base dell'API Copilot `http://127.0.0.1:8787`, al
+   posto di `https://api.githubcopilot.com`. Il nome dell'opzione dipende dallo strumento
+   (tipicamente `baseURL`, `api_base` o simili): cercala nella sua documentazione alla voce del
+   provider GitHub Copilot. L'URL va indicato senza path aggiuntivi: `copilot-proxy` inoltra il
+   path cosi' com'e'.
+3. Lascia che il proxy intermedio continui a gestire autenticazione e rinnovo del token:
+   `copilot-proxy` inoltra l'header `Authorization` senza modificarlo.
+4. Se il proxy intermedio usava un host Copilot specifico del piano (ad esempio
+   `api.business.githubcopilot.com`), metti quello in `UPSTREAM_BASE_URL` di `copilot-proxy`.
+
+Gli harness con un provider Copilot integrato e un URL configurabile (senza proxy intermedio)
+si configurano allo stesso modo: l'URL base del provider Copilot diventa
+`http://127.0.0.1:8787`.
+
+### Progetto e developer
+
+- Il progetto si ricava dai path citati nei messaggi, come per VS Code: funziona finche' il
+  proxy intermedio traduce il formato senza eliminare il contenuto dei messaggi.
+- Se un'istanza del proxy intermedio lavora sempre sullo stesso progetto, puoi dichiararlo
+  nell'URL: `http://127.0.0.1:8787/p/acme-portal`.
+- Il developer e' lo pseudonimo del token Copilot, quindi coincide con quello del traffico VS Code
+  della stessa persona: nessuna configurazione in piu'.
+
+### Verifica
+
+```bash
+copilot-proxy status    # "eventi misurati" deve crescere dopo qualche prompt nell'harness
+```
+
+Nel reporting il traffico dell'harness si distingue con `groupBy=client`: `client_name` e' lo
+user-agent del proxy intermedio. Le richieste senza contatori di token (elenco modelli, controlli
+di stato) attraversano `copilot-proxy` ma non producono eventi.
+
+### Quando non si puo'
+
+Se il proxy intermedio non permette di cambiare l'URL di Copilot, l'alternativa e' mettere
+`copilot-proxy` **prima** di lui (`harness -> copilot-proxy -> proxy intermedio`), con
+`UPSTREAM_BASE_URL` puntato al proxy intermedio. Funziona, ma con limiti:
+
+- `UPSTREAM_BASE_URL` vale per tutto il traffico: VS Code va servito da una seconda istanza di
+  `copilot-proxy`, su un'altra porta (`--port`) e con un'altra cartella di configurazione
+  (`COPILOT_PROXY_HOME`), avviata con `start` perche' l'avvio automatico gestisce una sola
+  istanza;
+- l'harness manda una chiave fittizia, che non identifica nessuno: dichiara il developer
+  nell'URL, ad esempio `http://127.0.0.1:8788/u/mario.rossi`;
+- se il proxy intermedio rimappa i modelli, viene registrato il modello che compare nella
+  risposta, che potrebbe non essere quello fatturato: controlla `/_usage/unknown-models`.
+
+Se `copilot-proxy` non e' nella catena, quel consumo non viene misurato e si vede solo come
+differenza fra la fattura GitHub e il costo misurato.
 
 ## Il contratto sul filo
 

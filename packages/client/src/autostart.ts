@@ -161,7 +161,16 @@ ${envBlock}  <key>StandardOutPath</key><string>${escapeXml(log)}</string>
   } catch {
     /* non era caricato */
   }
-  execFileSync('launchctl', ['bootstrap', domain, file], { stdio: 'pipe' });
+  // `bootout` e' asincrono: finche' launchd non ha finito, `bootstrap` fallisce con EIO (5).
+  for (let attempt = 1; ; attempt++) {
+    try {
+      execFileSync('launchctl', ['bootstrap', domain, file], { stdio: 'pipe' });
+      break;
+    } catch (error) {
+      if (attempt >= 10) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+    }
+  }
 
   return { file, removeHint: `launchctl bootout ${domain}/${LABEL} && rm ${file}` };
 }
