@@ -348,6 +348,7 @@ con `npx @vidiemme/copilot-proxy@latest`.
 | `start` | Avvia il proxy in primo piano (comando predefinito se non ne indichi uno). |
 | `status` | Mostra versione installata e in esecuzione, instradamento di editor e Copilot CLI, contatori per client e spool. |
 | `doctor` | Controlla configurazione, cartelle, collector, editor (anche override commentati), `COPILOT_API_URL` e runtime da riavviare, spool e processo. |
+| `reload [cartella]` | Carica nel collector lo storico delle sessioni gia' fatte: vedi [Caricare lo storico](#caricare-lo-storico). |
 | `restart` | Riavvia il servizio automatico gia' registrato. |
 | `uninstall` | Rimuove l'avvio automatico e `COPILOT_API_URL`; lascia configurazione e impostazioni editor. |
 | `--version` | Mostra la versione del CLI. |
@@ -373,6 +374,48 @@ Per cambiare porta senza reinserire il token:
 ```bash
 copilot-proxy setup --force --port 9000 --vscode --autostart
 ```
+
+### Caricare lo storico
+
+Il proxy misura da quando e' installato. Per il periodo precedente `reload`
+rilegge le sessioni che gli strumenti salvano sulla macchina e le carica nel
+collector con la stessa configurazione del `setup`:
+
+```bash
+copilot-proxy reload ~/Work --from 2026-10-01 --to 2026-10-31 --dry-run   # anteprima
+copilot-proxy reload ~/Work --from 2026-10-01 --to 2026-10-31             # caricamento
+```
+
+| Opzione | Uso |
+| --- | --- |
+| `[cartella]` | Solo le sessioni avviate in progetti sotto questa cartella; default le cartelle di lavoro del setup. |
+| `--from <data>`, `--to <data>` | Periodo, estremi compresi, in ora locale (`AAAA-MM-GG`). Senza, tutto lo storico disponibile. |
+| `--dry-run` | Mostra progetti, chiamate e token che verrebbero caricati, senza inviare. |
+| `--yes` | Salta la conferma; necessario quando non c'e' un terminale. |
+
+| Sorgente | Dove | Precisione |
+| --- | --- | --- |
+| Copilot CLI e sessioni agentiche in VS Code | `~/.copilot/session-state` | Esatta: contatori di ogni chiamata. |
+| Chat di Copilot in VS Code e derivati | `workspaceStorage/*/chatSessions` | Costo esatto, token stimati (sotto). |
+
+Le chat di VS Code conservano per ogni richiesta i crediti addebitati, l'output
+totale e il contesto dell'ultimo round, non la ripartizione fra i round. `reload`
+la ricostruisce in modo che, prezzata con il listino del collector (letto da
+`/v1/rates`), dia esattamente l'addebito: costi e output sono quelli reali,
+la divisione fra cache letta e scritta e' una stima. Le richieste salvate senza
+crediti, da versioni vecchie dell'estensione, vengono escluse e contate nel riepilogo.
+
+Gli eventi caricati si riconoscono dal client `GitHubCopilotChat/reload` e
+`copilot/reload`. Il developer e' uno pseudonimo dell'email (il token Copilot
+usato dal proxy qui non c'e'): con un nome configurato il collector lo unisce
+al traffico dal vivo sotto lo stesso nome, in anonimo resta un developer a parte.
+
+Il comando si puo' rilanciare: le chiavi degli eventi sono deterministiche e il
+collector deduplica. **Non deduplica pero' le chat di VS Code con il traffico
+gia' misurato dal proxy**, perche' non hanno un id in comune: se il proxy era
+attivo nel periodo scelto, `reload` lo segnala dal log del proxy e suggerisce
+il `--to` da usare. Per Copilot CLI la chiave e' l'id della richiesta GitHub,
+lo stesso che usa il proxy.
 
 ### File e variabili d'ambiente
 

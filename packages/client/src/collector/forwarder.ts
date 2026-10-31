@@ -44,7 +44,24 @@ export function clientFamily(clientName: string | null | undefined): string {
   return name || 'sconosciuto';
 }
 
-function chunk<T>(items: T[], size: number): T[][] {
+/** Header di ogni invio al collector: credenziale e, se dichiarata, identita' del developer. */
+export function collectorHeaders(config: ClientConfig): Record<string, string> {
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    authorization: `Bearer ${config.collectorToken}`,
+    'user-agent': CLIENT_USER_AGENT,
+  };
+  // Gli header HTTP sono ASCII: nomi accentati viaggiano percent-encoded.
+  if (config.developerName) {
+    headers['x-developer-name'] = encodeURIComponent(config.developerName);
+    if (config.developerEmail) {
+      headers['x-developer-email'] = encodeURIComponent(config.developerEmail);
+    }
+  }
+  return headers;
+}
+
+export function chunk<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let index = 0; index < items.length; index += size) {
     chunks.push(items.slice(index, index + size));
@@ -78,7 +95,7 @@ export class UsageForwarder {
   private readonly batchSize: number;
   private readonly spoolPath: string;
   private readonly sendingPath: string;
-  private readonly identityHeaders: Record<string, string> = {};
+  private readonly headers: Record<string, string>;
 
   constructor(
     private readonly config: ClientConfig,
@@ -87,13 +104,7 @@ export class UsageForwarder {
     this.batchSize = Math.min(config.flushMaxBatch, MAX_EVENTS_PER_BATCH);
     this.spoolPath = config.spoolPath;
     this.sendingPath = `${config.spoolPath}.sending`;
-    // Gli header HTTP sono ASCII: nomi accentati viaggiano percent-encoded.
-    if (config.developerName) {
-      this.identityHeaders['x-developer-name'] = encodeURIComponent(config.developerName);
-      if (config.developerEmail) {
-        this.identityHeaders['x-developer-email'] = encodeURIComponent(config.developerEmail);
-      }
-    }
+    this.headers = collectorHeaders(config);
   }
 
   start(): void {
@@ -170,12 +181,7 @@ export class UsageForwarder {
     try {
       response = await fetch(this.config.collectorUrl, {
         method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${this.config.collectorToken}`,
-          'user-agent': CLIENT_USER_AGENT,
-          ...this.identityHeaders,
-        },
+        headers: this.headers,
         body: JSON.stringify({ events }),
         signal: AbortSignal.timeout(this.config.collectorTimeoutMs),
       });

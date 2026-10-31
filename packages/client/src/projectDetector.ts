@@ -146,6 +146,11 @@ export class ProjectDetector {
     return undefined;
   }
 
+  /** Repository di un path locale, es. la cartella di lavoro di una sessione registrata. */
+  resolve(path: string, now = Date.now()): RepositoryIdentity | undefined {
+    return this.projectFor(normalizePath(path), now);
+  }
+
   private fromBody(body: Buffer, now: number): RepositoryIdentity | undefined {
     if (!this.pattern || body.length === 0) return undefined;
 

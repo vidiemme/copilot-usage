@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
+import { totalInputTokens, type TokenCounters } from '@vidiemme/copilot-usage-contract';
 import {
   API_URL_VAR,
   installRuntimeRouting,
@@ -23,6 +25,18 @@ import {
   type Editor,
 } from './editors.js';
 import { configDir, configFile } from './paths.js';
+import {
+  buildReloadPlan,
+  chatModels,
+  developerIdFor,
+  fetchRates,
+  proxyFirstStart,
+  readLocalSessions,
+  sendEvents,
+  type RateBook,
+  type ReloadOptions,
+  type ReloadPlan,
+} from './reload/index.js';
 import { buildApp } from './server.js';
 import { gitIdentity, portStatus } from './setupHelpers.js';
 import { CLIENT_VERSION } from './version.js';
@@ -37,6 +51,7 @@ al progetto su cui si sta lavorando.
   npx @vidiemme/copilot-proxy start      avvia il proxy
   npx @vidiemme/copilot-proxy doctor     verifica che tutto sia a posto
   npx @vidiemme/copilot-proxy status     versione, traffico misurato, eventi in attesa
+  npx @vidiemme/copilot-proxy reload     carica lo storico delle sessioni gia' fatte
   npx @vidiemme/copilot-proxy restart    riavvia il servizio (dopo un aggiornamento)
   npx @vidiemme/copilot-proxy uninstall  rimuove l'avvio automatico
   npx @vidiemme/copilot-proxy --version
@@ -68,6 +83,17 @@ modo nascosto.
 
 Opzioni di start:
   --port <n>  --log-level <livello>  --collector-url <url>  --workspace-roots <a,b>
+
+Opzioni di reload:
+  reload [cartella]         carica le sessioni dei progetti sotto la cartella
+                            (default: le cartelle di lavoro del setup)
+  --from <data>             dal giorno indicato (AAAA-MM-GG, ora locale)
+  --to <data>               fino al giorno indicato, compreso
+  --dry-run                 mostra cosa verrebbe caricato, senza inviare nulla
+  --yes                     non chiede conferma (necessario senza terminale)
+
+Legge le sessioni di Copilot CLI e le chat di Copilot in VS Code e derivati. Si
+puo' rilanciare: gli eventi gia' caricati non vengono duplicati.
 `.trimStart();
 
 /** I valori sul filo usano le stesse chiavi delle variabili d'ambiente: un solo vocabolario da documentare. */
@@ -601,6 +627,142 @@ async function commandStatus(): Promise<number> {
   return 0;
 }
 
+/**
+ * Data della riga di comando. Un giorno senza orario e' in ora locale, come lo
+ * intende chi lo scrive; `endOfDay` lo trasforma nel limite esclusivo del giorno dopo.
+ */
+function parseDate(value: string, endOfDay: boolean): Date {
+  const dayOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const date = new Date(dayOnly ? `${value}T00:00:00` : value);
+  if (Number.isNaN(date.getTime())) throw new Error(`Data non valida: ${value}. Usa AAAA-MM-GG.`);
+  if (dayOnly && endOfDay) date.setDate(date.getDate() + 1);
+  return date;
+}
+
+function formatTokens(value: number): string {
+  return value.toLocaleString('it-IT');
+}
+
+function printPlan(plan: ReloadPlan): void {
+  const rows = new Map<string, { calls: number; usage: TokenCounters }>();
+  for (const event of plan.events) {
+    const row = rows.get(event.projectId) ?? {
+      calls: 0,
+      usage: { inputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0 },
+    };
+    row.calls += 1;
+    row.usage.inputTokens += event.usage.inputTokens;
+    row.usage.cachedInputTokens += event.usage.cachedInputTokens;
+    row.usage.cacheWriteTokens += event.usage.cacheWriteTokens;
+    row.usage.outputTokens += event.usage.outputTokens;
+    rows.set(event.projectId, row);
+  }
+
+  const ordered = [...rows].sort(([, a], [, b]) => totalInputTokens(b.usage) - totalInputTokens(a.usage));
+  for (const [project, { calls, usage }] of ordered) {
+    console.log(
+      `  ${project}\n    ${calls} chiamate, input ${formatTokens(totalInputTokens(usage))} ` +
+        `(cache ${formatTokens(usage.cachedInputTokens)} letti, ${formatTokens(usage.cacheWriteTokens)} scritti), ` +
+        `output ${formatTokens(usage.outputTokens)}`,
+    );
+  }
+  console.log(
+    `\nCopilot CLI e sessioni agentiche: ${plan.sources['copilot-cli']} chiamate` +
+      `\nChat di VS Code: ${plan.sources['vscode-chat']} richieste, ${formatTokens(Math.round(plan.chatCredits))} crediti addebitati`,
+  );
+
+  const { noBilling, unpriced, noRates } = plan.skippedChat;
+  if (noBilling > 0) console.log(`  escluse ${noBilling} richieste salvate senza crediti (editor troppo vecchio)`);
+  if (noRates > 0) console.log(`  escluse ${noRates} richieste: senza listino non si possono ricostruire`);
+  for (const [model, requests] of unpriced) {
+    console.log(`  escluse ${requests} richieste con ${model}: il collector non ha la tariffa`);
+  }
+}
+
+async function confirm(question: string): Promise<boolean> {
+  const answer = await promptLine(`${question} [s/N] `);
+  return /^(s|si|sì|y|yes)$/i.test(answer);
+}
+
+async function commandReload(
+  flags: Record<string, string | boolean | undefined>,
+  root: string | undefined,
+): Promise<number> {
+  let config: ClientConfig;
+  let options: ReloadOptions;
+  try {
+    config = loadConfig(mergedSource({}));
+    options = {
+      roots: root ? [resolvePath(root)] : config.workspaceRoots,
+      markers: config.projectMarkers,
+      from: flags.from ? parseDate(String(flags.from), false) : undefined,
+      to: flags.to ? parseDate(String(flags.to), true) : undefined,
+    };
+  } catch (error) {
+    console.error(`${(error as Error).message}\n\nSe e' la prima volta:  npx @vidiemme/copilot-proxy setup`);
+    return 1;
+  }
+  const dryRun = flags['dry-run'] === true;
+
+  console.log(`Sessioni dei progetti sotto ${options.roots.join(', ')}`);
+  const inputs = readLocalSessions(options);
+
+  let rates: RateBook | undefined;
+  try {
+    rates = await fetchRates(config, chatModels(inputs.chatRequests));
+  } catch (error) {
+    console.log(`ATTENZIONE: ${(error as Error).message}`);
+  }
+
+  const plan = buildReloadPlan(inputs, options, developerIdFor(config), rates);
+  if (plan.events.length === 0) {
+    console.log('Nessuna sessione da caricare nel periodo indicato.');
+    printPlan(plan);
+    return 0;
+  }
+  printPlan(plan);
+
+  // Le chat di VS Code non hanno un id in comune con il traffico misurato dal
+  // vivo: nel periodo in cui il proxy era attivo finirebbero contate due volte.
+  const proxySince = proxyFirstStart();
+  const overlaps = proxySince && (!options.to || options.to > proxySince) && plan.sources['vscode-chat'] > 0;
+  if (overlaps) {
+    const day = proxySince.toLocaleDateString('sv-SE');
+    console.log(
+      `\nATTENZIONE: il proxy misura questa postazione dal ${proxySince.toLocaleString('it-IT')}.` +
+        `\nLe chat di VS Code da allora sono probabilmente gia' nel collector e verrebbero contate due volte.` +
+        `\nPer escluderle: --to ${day} (o il giorno prima, se quel giorno il proxy non era ancora attivo).`,
+    );
+  }
+
+  if (dryRun) {
+    console.log(`\n${plan.events.length} eventi pronti. Niente e' stato inviato (--dry-run).`);
+    return 0;
+  }
+
+  if (flags.yes !== true) {
+    if (process.stdin.isTTY !== true) {
+      console.error('\nSenza terminale serve --yes per confermare il caricamento.');
+      return 1;
+    }
+    if (!(await confirm(`\nCaricare ${plan.events.length} eventi su ${config.collectorUrl}?`))) {
+      console.log('Annullato.');
+      return 1;
+    }
+  }
+
+  const result = await sendEvents(config, plan.events, (sent) => {
+    process.stdout.write(`\rinviati ${sent}/${plan.events.length}`);
+  });
+  process.stdout.write('\n');
+  console.log(`Accettati ${result.accepted}, scartati dal collector ${result.rejected}.`);
+  if (result.error) {
+    console.error(`${result.error}: ${result.failed} eventi non inviati. Rilancia lo stesso comando per riprendere.`);
+    return 1;
+  }
+  return 0;
+}
+
 function commandRestart(): number {
   try {
     restartAutostart();
@@ -664,6 +826,10 @@ async function main(): Promise<void> {
       vscode: { type: 'boolean' },
       autostart: { type: 'boolean' },
       force: { type: 'boolean' },
+      from: { type: 'string' },
+      to: { type: 'string' },
+      'dry-run': { type: 'boolean' },
+      yes: { type: 'boolean', short: 'y' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
     },
@@ -691,6 +857,9 @@ async function main(): Promise<void> {
       return;
     case 'status':
       process.exitCode = await commandStatus();
+      return;
+    case 'reload':
+      process.exitCode = await commandReload(values, positionals[1]);
       return;
     case 'restart':
       process.exitCode = commandRestart();
