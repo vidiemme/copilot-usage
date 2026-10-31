@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copilot Proxy - consegna degli eventi</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #fafaf7; color: #000000; font-family: 'Geist', sans-serif; }
+    .frame { width: 960px; max-width: 100%; min-width: 0; margin: auto; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .heading { font-family: 'Instrument Serif', serif; font-size: 28px; font-weight: 400; }
+    .name { font-family: 'Geist', sans-serif; font-size: 12px; font-weight: 600; }
+    .msg { font-family: 'Geist', sans-serif; font-size: 11px; fill: #000000; }
+    .detail { font-family: 'Geist Mono', monospace; font-size: 9px; fill: #666666; }
+    .tag, .label { font-family: 'Geist Mono', monospace; font-size: 8px; fill: #666666; letter-spacing: 0.06em; }
+    .red { fill: #ff0005; }
+    .note { font-family: 'Geist', sans-serif; font-size: 11px; fill: #666666; }
+    .halo { paint-order: stroke; stroke: #fafaf7; stroke-width: 5px; stroke-linejoin: round; }
+    .box { fill: #fafaf7; stroke: #bfbfbc; stroke-width: 1; }
+    .own { fill: #fafaf7; stroke: #ff0005; stroke-width: 2; }
+    .private { fill: #fafaf7; stroke: #000000; stroke-width: 1.5; }
+    .muted { fill: #f0f0ed; stroke: #bfbfbc; stroke-width: 1; stroke-dasharray: 3,3; }
+    .http { fill: none; stroke: #000000; stroke-width: 1.2; marker-end: url(#arrow-link); }
+    .local { fill: none; stroke: #666666; stroke-width: 1.2; marker-end: url(#arrow); }
+    .async { fill: none; stroke: #666666; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow); }
+    .bad { fill: none; stroke: #ff0005; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow-red); }
+    .life { stroke: #bfbfbc; stroke-width: 1; stroke-dasharray: 2,4; }
+    footer { margin-top: 16px; font-size: 11px; color: #666666; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="delivery-title delivery-desc">
+        <title id="delivery-title">Consegna degli eventi e spool</title>
+        <desc id="delivery-desc">Gli eventi passano dalla coda in memoria a invii in batch verso il collector. Errori di rete, 5xx, 401, 403, 408 e 429 portano gli eventi nello spool su disco, ritentato al flush successivo e al riavvio. Gli altri 4xx e la coda piena scartano gli eventi.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#666666"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000000"/></marker>
+          <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff0005"/></marker>
+        </defs>
+        <rect width="960" height="600" fill="#fafaf7"/>
+        <text x="40" y="40" class="tag">BIP RED / COPILOT PROXY / CONSEGNA</text>
+        <text x="40" y="80" class="heading">Il collector puo' sparire. La misura resta.</text>
+        <rect x="40" y="176" width="160" height="84" rx="6" class="box"/>
+        <text x="56" y="196" class="tag">PROXY</text>
+        <text x="56" y="218" class="name">Risposta con usage</text>
+        <text x="56" y="235" class="detail">un evento normalizzato</text>
+        <rect x="256" y="176" width="184" height="84" rx="6" class="box"/>
+        <text x="272" y="196" class="tag">MEMORIA</text>
+        <text x="272" y="218" class="name">Coda</text>
+        <text x="272" y="235" class="detail">max 10.000 eventi</text>
+        <rect x="496" y="176" width="184" height="84" rx="6" class="own"/>
+        <text x="512" y="196" class="tag">FORWARDER</text>
+        <text x="512" y="218" class="name">POST /v1/usage</text>
+        <text x="512" y="235" class="detail">batch da 100 (max 500)</text>
+        <text x="512" y="248" class="detail">ogni 5 s o a batch pieno</text>
+        <rect x="760" y="176" width="160" height="84" rx="6" class="box"/>
+        <text x="776" y="196" class="tag">2XX</text>
+        <text x="776" y="218" class="name">Consegnati</text>
+        <text x="776" y="235" class="detail">rejected -&gt; scartati</text>
+        <rect x="496" y="360" width="184" height="76" rx="6" class="box"/>
+        <text x="512" y="380" class="tag">DISCO</text>
+        <text x="512" y="402" class="name">spool.jsonl</text>
+        <text x="512" y="419" class="detail">max 50.000, i piu' recenti</text>
+        <rect x="760" y="360" width="160" height="76" rx="6" class="muted"/>
+        <text x="776" y="380" class="tag">PERSI</text>
+        <text x="776" y="402" class="name">Scartati</text>
+        <text x="776" y="419" class="detail">contatore dropped</text>
+        <path d="M200 218 H256" class="http"/>
+        <path d="M440 218 H496" class="local"/>
+        <path d="M680 210 H760" class="http"/>
+        <text x="468" y="210" text-anchor="middle" class="label halo">FLUSH</text>
+        <text x="720" y="202" text-anchor="middle" class="label halo">202</text>
+        <path d="M560 260 V360" class="async"/>
+        <text x="552" y="300" text-anchor="end" class="label halo">RETE, TIMEOUT, 5XX</text>
+        <text x="552" y="312" text-anchor="end" class="label halo">401 · 403 · 408 · 429</text>
+        <path d="M616 360 V260" class="async"/>
+        <text x="624" y="300" class="label halo">FLUSH SUCCESSIVO</text>
+        <text x="624" y="312" class="label halo">E AL RIAVVIO</text>
+        <path d="M680 240 H712 Q720 240 720 248 V390 Q720 398 728 398 H760" class="bad"/>
+        <text x="726" y="330" class="label halo">ALTRI 4XX</text>
+        <path d="M348 260 V472 Q348 480 356 480 H832 Q840 480 840 472 V436" class="bad"/>
+        <text x="520" y="474" text-anchor="middle" class="label halo">CODA PIENA</text>
+        <text x="40" y="512" class="note">requestId rende i rinvii innocui: il collector deduplica.</text>
+        <text x="40" y="530" class="note">Arresto pulito: la coda finisce nello spool. Arresto brusco: si perde solo la coda in memoria; un invio interrotto (.sending) viene ripreso al riavvio.</text>
+        <line x1="40" y1="556" x2="920" y2="556" stroke="#bfbfbc"/>
+        <line x1="40" y1="580" x2="72" y2="580" stroke="#000000"/>
+        <text x="84" y="584" class="note">Consegna</text>
+        <line x1="172" y1="580" x2="204" y2="580" stroke="#666666" stroke-dasharray="5,4"/>
+        <text x="216" y="584" class="note">Ritentativo</text>
+        <line x1="322" y1="580" x2="354" y2="580" stroke="#ff0005" stroke-dasharray="5,4"/>
+        <text x="366" y="584" class="note">Perdita</text>
+      </svg>
+    </div>
+    <footer>Palette da bip.red, fondo e grigi adattati per contrasto. PolySans non incluso: Instrument Serif, Geist e Geist Mono sono fallback dichiarati. Diagram Design, doc-inline, statico.</footer>
+  </main>
+</body>
+</html>

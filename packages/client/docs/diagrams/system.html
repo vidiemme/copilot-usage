@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copilot Usage - sistema</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #fafaf7; color: #000000; font-family: 'Geist', sans-serif; }
+    .frame { width: 960px; max-width: 100%; min-width: 0; margin: auto; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .heading { font-family: 'Instrument Serif', serif; font-size: 28px; font-weight: 400; }
+    .name { font-family: 'Geist', sans-serif; font-size: 12px; font-weight: 600; }
+    .detail { font-family: 'Geist Mono', monospace; font-size: 9px; fill: #666666; }
+    .tag, .label { font-family: 'Geist Mono', monospace; font-size: 8px; fill: #666666; letter-spacing: 0.06em; }
+    .note { font-family: 'Geist', sans-serif; font-size: 11px; fill: #666666; }
+    .halo { paint-order: stroke; stroke: #fafaf7; stroke-width: 5px; stroke-linejoin: round; }
+    .box { fill: #fafaf7; stroke: #bfbfbc; stroke-width: 1; }
+    .own { fill: #fafaf7; stroke: #ff0005; stroke-width: 2; }
+    .private { fill: #fafaf7; stroke: #000000; stroke-width: 1.5; }
+    .http { fill: none; stroke: #000000; stroke-width: 1.2; marker-end: url(#arrow-link); }
+    .local { fill: none; stroke: #666666; stroke-width: 1.2; marker-end: url(#arrow); }
+    .async { fill: none; stroke: #666666; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow); }
+    footer { margin-top: 16px; font-size: 11px; color: #666666; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="system-title system-desc">
+        <title id="system-title">Copilot Usage: le due parti del sistema</title>
+        <desc id="system-desc">Sulla macchina del developer il proxy inoltra la conversazione a GitHub Copilot e invia solo eventi di consumo al collector privato, che li prezza con il listino GitHub, li salva su Postgres e li espone alla console di reporting.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#666666"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000000"/></marker>
+        </defs>
+        <rect width="960" height="600" fill="#fafaf7"/>
+        <text x="40" y="40" class="tag">BIP RED / COPILOT USAGE / SISTEMA</text>
+        <text x="40" y="80" class="heading">Due parti, due repository, un contratto.</text>
+
+        <rect x="40" y="116" width="520" height="300" rx="8" fill="#f0f0ed" stroke="#bfbfbc" stroke-dasharray="4,4"/>
+        <text x="64" y="144" class="tag">MACCHINA DEL DEVELOPER · REPOSITORY PUBBLICO</text>
+        <rect x="640" y="296" width="280" height="244" rx="8" fill="#f0f0ed" stroke="#bfbfbc" stroke-dasharray="4,4"/>
+        <text x="656" y="522" class="tag">CLOUD VIDIEMME · REPOSITORY PRIVATO</text>
+
+        <!-- conversazione -->
+        <path d="M240 204 H320" class="http"/>
+        <path d="M320 232 H240" class="http"/>
+        <path d="M496 204 H664" class="http"/>
+        <path d="M664 232 H496" class="http"/>
+        <text x="280" y="196" text-anchor="middle" class="label halo">RICHIESTA</text>
+        <text x="280" y="248" text-anchor="middle" class="label halo">RISPOSTA</text>
+        <text x="580" y="196" text-anchor="middle" class="label halo">PROMPT + TOKEN COPILOT</text>
+        <text x="580" y="248" text-anchor="middle" class="label halo">STREAM SSE / JSON</text>
+
+        <!-- rilevamento locale -->
+        <path d="M240 352 H328 Q336 352 336 344 V252" class="local"/>
+
+        <!-- spool -->
+        <path d="M384 252 V320" class="async"/>
+        <path d="M424 320 V252" class="async"/>
+        <text x="378" y="292" text-anchor="end" class="label halo">FALLITI</text>
+        <text x="430" y="292" class="label halo">RETRY</text>
+
+        <!-- eventi -->
+        <path d="M480 252 V350 Q480 358 488 358 H664" class="async"/>
+        <text x="576" y="350" text-anchor="middle" class="label halo">EVENTI · HTTPS · BEARER</text>
+
+        <!-- GitHub -> collector -->
+        <path d="M744 252 V320" class="async"/>
+        <path d="M848 252 V320" class="async"/>
+        <text x="750" y="280" class="label halo">LISTINO</text>
+        <text x="750" y="291" class="label halo">GIORNALIERO</text>
+        <text x="854" y="280" class="label halo">FATTURA</text>
+        <text x="854" y="291" class="label halo">MENSILE</text>
+
+        <!-- collector -> postgres / console -->
+        <path d="M716 396 V440" class="local"/>
+        <path d="M844 440 V396" class="local"/>
+        <text x="722" y="422" class="label halo">SQL</text>
+        <text x="850" y="422" class="label halo">/_usage</text>
+
+        <rect x="64" y="176" width="176" height="76" rx="6" class="box"/>
+        <text x="80" y="196" class="tag">CLIENT</text>
+        <text x="80" y="220" class="name">Editor, CLI, harness</text>
+        <text x="80" y="238" class="detail">base URL 127.0.0.1:8787</text>
+
+        <rect x="320" y="176" width="176" height="76" rx="6" class="own"/>
+        <text x="336" y="196" class="tag">PROXY LOCALE · NPM</text>
+        <text x="336" y="220" class="name">@vidiemme/copilot-proxy</text>
+        <text x="336" y="238" class="detail">misura + attribuisce</text>
+
+        <rect x="664" y="176" width="232" height="76" rx="6" class="box"/>
+        <text x="680" y="196" class="tag">GITHUB</text>
+        <text x="680" y="220" class="name">GitHub Copilot</text>
+        <text x="680" y="238" class="detail">API · listino docs · billing API</text>
+
+        <rect x="64" y="320" width="176" height="64" rx="6" class="box"/>
+        <text x="80" y="340" class="tag">CONTESTO LOCALE</text>
+        <text x="80" y="362" class="name">Repository Git</text>
+        <text x="80" y="376" class="detail">path → .git → remote</text>
+
+        <rect x="344" y="320" width="112" height="64" rx="6" class="box"/>
+        <text x="356" y="340" class="tag">SU DISCO</text>
+        <text x="356" y="362" class="name">Spool</text>
+        <text x="356" y="376" class="detail">spool.jsonl</text>
+
+        <rect x="664" y="320" width="232" height="76" rx="6" class="private"/>
+        <text x="680" y="340" class="tag">RACCOLTA · PRIVATO</text>
+        <text x="680" y="364" class="name">copilot-usage-collector</text>
+        <text x="680" y="382" class="detail">prezza + deduplica + salva</text>
+
+        <rect x="664" y="440" width="104" height="64" rx="6" class="box"/>
+        <text x="676" y="460" class="tag">DATI</text>
+        <text x="676" y="482" class="name">Postgres</text>
+        <text x="676" y="496" class="detail">eventi + rollup</text>
+
+        <rect x="792" y="440" width="104" height="64" rx="6" class="box"/>
+        <text x="804" y="460" class="tag">REPORTING</text>
+        <text x="804" y="482" class="name">Console web</text>
+        <text x="804" y="496" class="detail">basic auth</text>
+
+        <text x="64" y="446" class="note">Il proxy legge il corpo in memoria e non salva mai prompt o risposte.</text>
+        <text x="64" y="464" class="note">Al collector arrivano solo contatori e identificatori, mai il token Copilot.</text>
+        <text x="64" y="482" class="note">Il contratto fra le due parti e' @vidiemme/copilot-usage-contract.</text>
+
+        <line x1="40" y1="552" x2="920" y2="552" stroke="#bfbfbc"/>
+        <line x1="40" y1="576" x2="72" y2="576" stroke="#000000"/>
+        <text x="84" y="580" class="note">Traffico Copilot</text>
+        <line x1="216" y1="576" x2="248" y2="576" stroke="#666666"/>
+        <text x="260" y="580" class="note">Lettura locale / SQL</text>
+        <line x1="416" y1="576" x2="448" y2="576" stroke="#666666" stroke-dasharray="5,4"/>
+        <text x="460" y="580" class="note">Asincrono / retry</text>
+        <rect x="600" y="568" width="16" height="16" rx="2" fill="#fafaf7" stroke="#ff0005" stroke-width="2"/>
+        <text x="626" y="580" class="note">Pacchetto npm pubblico</text>
+        <rect x="788" y="568" width="16" height="16" rx="2" fill="#fafaf7" stroke="#000000" stroke-width="1.5"/>
+        <text x="814" y="580" class="note">Servizio privato</text>
+      </svg>
+    </div>
+    <footer>Palette da bip.red, fondo e grigi adattati per contrasto. PolySans non incluso: Instrument Serif, Geist e Geist Mono sono fallback dichiarati. Diagram Design, doc-inline, statico.</footer>
+  </main>
+</body>
+</html>

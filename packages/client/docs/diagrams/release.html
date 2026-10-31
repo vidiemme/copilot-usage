@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copilot Usage - release</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #fafaf7; color: #000000; font-family: 'Geist', sans-serif; }
+    .frame { width: 960px; max-width: 100%; min-width: 0; margin: auto; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .heading { font-family: 'Instrument Serif', serif; font-size: 28px; font-weight: 400; }
+    .name { font-family: 'Geist', sans-serif; font-size: 12px; font-weight: 600; }
+    .msg { font-family: 'Geist', sans-serif; font-size: 11px; fill: #000000; }
+    .detail { font-family: 'Geist Mono', monospace; font-size: 9px; fill: #666666; }
+    .tag, .label { font-family: 'Geist Mono', monospace; font-size: 8px; fill: #666666; letter-spacing: 0.06em; }
+    .red { fill: #ff0005; }
+    .note { font-family: 'Geist', sans-serif; font-size: 11px; fill: #666666; }
+    .halo { paint-order: stroke; stroke: #fafaf7; stroke-width: 5px; stroke-linejoin: round; }
+    .box { fill: #fafaf7; stroke: #bfbfbc; stroke-width: 1; }
+    .own { fill: #fafaf7; stroke: #ff0005; stroke-width: 2; }
+    .private { fill: #fafaf7; stroke: #000000; stroke-width: 1.5; }
+    .muted { fill: #f0f0ed; stroke: #bfbfbc; stroke-width: 1; stroke-dasharray: 3,3; }
+    .http { fill: none; stroke: #000000; stroke-width: 1.2; marker-end: url(#arrow-link); }
+    .local { fill: none; stroke: #666666; stroke-width: 1.2; marker-end: url(#arrow); }
+    .async { fill: none; stroke: #666666; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow); }
+    .bad { fill: none; stroke: #ff0005; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow-red); }
+    .life { stroke: #bfbfbc; stroke-width: 1; stroke-dasharray: 2,4; }
+    footer { margin-top: 16px; font-size: 11px; color: #666666; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="release-title release-desc">
+        <title id="release-title">Rilascio dei pacchetti npm</title>
+        <desc id="release-desc">Si aggiorna la versione del proxy, si spinge un tag vX.Y.Z e publish.yml esegue typecheck, test e build, verifica che il tag corrisponda alla versione del proxy, pubblica il contratto solo se la sua versione e' nuova e infine il proxy, autenticandosi a npm con OIDC.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#666666"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000000"/></marker>
+          <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff0005"/></marker>
+        </defs>
+        <rect width="960" height="520" fill="#fafaf7"/>
+        <text x="40" y="40" class="tag">BIP RED / COPILOT USAGE / RELEASE</text>
+        <text x="40" y="80" class="heading">Un tag, due pacchetti, nessun token npm.</text>
+        <text x="40" y="136" class="tag">SVILUPPATORE</text>
+        <text x="516" y="136" class="tag">GITHUB ACTIONS · publish.yml</text>
+        <rect x="40" y="152" width="200" height="72" rx="6" class="box"/>
+        <text x="56" y="172" class="tag">VERSIONE</text>
+        <text x="56" y="194" class="name">npm version X.Y.Z</text>
+        <text x="56" y="211" class="detail">-w @vidiemme/copilot-proxy</text>
+        <rect x="288" y="152" width="180" height="72" rx="6" class="box"/>
+        <text x="304" y="172" class="tag">TAG</text>
+        <text x="304" y="194" class="name">git tag vX.Y.Z</text>
+        <text x="304" y="211" class="detail">git push --tags</text>
+        <rect x="516" y="152" width="200" height="72" rx="6" class="box"/>
+        <text x="532" y="172" class="tag">VERIFICHE</text>
+        <text x="532" y="194" class="name">npm ci</text>
+        <text x="532" y="211" class="detail">typecheck · test · build</text>
+        <rect x="764" y="152" width="156" height="72" rx="6" class="box"/>
+        <text x="780" y="172" class="tag">CONTROLLO</text>
+        <text x="780" y="194" class="name">tag = versione proxy?</text>
+        <text x="780" y="211" class="detail">no: si ferma</text>
+        <rect x="764" y="280" width="156" height="72" rx="6" class="box"/>
+        <text x="780" y="300" class="tag">CONTROLLO</text>
+        <text x="780" y="322" class="name">contratto gia' su npm?</text>
+        <text x="780" y="339" class="detail">stessa versione</text>
+        <rect x="516" y="280" width="200" height="72" rx="6" class="own"/>
+        <text x="532" y="300" class="tag">PUBBLICA</text>
+        <text x="532" y="322" class="name">copilot-usage-contract</text>
+        <text x="532" y="339" class="detail">prima, il client lo importa</text>
+        <rect x="288" y="280" width="180" height="72" rx="6" class="own"/>
+        <text x="304" y="300" class="tag">PUBBLICA</text>
+        <text x="304" y="322" class="name">copilot-proxy</text>
+        <text x="304" y="339" class="detail">OIDC, trusted publishing</text>
+        <path d="M240 188 H288" class="http"/>
+        <path d="M468 188 H516" class="http"/>
+        <path d="M716 188 H764" class="http"/>
+        <path d="M842 224 V280" class="http"/>
+        <text x="850" y="256" class="label halo">SI'</text>
+        <path d="M764 316 H716" class="http"/>
+        <text x="740" y="308" text-anchor="middle" class="label halo">NO</text>
+        <path d="M516 316 H468" class="http"/>
+        <path d="M842 352 V384 Q842 392 834 392 H386 Q378 392 378 384 V352" class="async"/>
+        <text x="610" y="410" text-anchor="middle" class="label halo">SI': SALTA IL CONTRATTO</text>
+        <rect x="40" y="280" width="200" height="72" rx="6" class="muted"/>
+        <text x="56" y="300" class="tag">CI.YML · PUSH E PR</text>
+        <text x="56" y="322" class="name">Stesse verifiche</text>
+        <text x="56" y="339" class="detail">+ smoke e verify-detection</text>
+        <text x="40" y="436" class="note">Il contratto ha un ciclo di versioni suo, non legato al tag: si incrementa solo quando cambia.</text>
+        <text x="40" y="454" class="note">Primo rilascio in assoluto: un NPM_TOKEN temporaneo, poi trusted publishing su npmjs.com e il secret si cancella.</text>
+        <line x1="40" y1="476" x2="920" y2="476" stroke="#bfbfbc"/>
+        <line x1="40" y1="500" x2="72" y2="500" stroke="#000000"/>
+        <text x="84" y="504" class="note">Passo successivo</text>
+        <line x1="220" y1="500" x2="252" y2="500" stroke="#666666" stroke-dasharray="5,4"/>
+        <text x="264" y="504" class="note">Salto</text>
+        <rect x="334" y="492" width="16" height="16" rx="2" fill="#fafaf7" stroke="#ff0005" stroke-width="2"/>
+        <text x="360" y="504" class="note">Pubblicazione su npm</text>
+      </svg>
+    </div>
+    <footer>Palette da bip.red, fondo e grigi adattati per contrasto. PolySans non incluso: Instrument Serif, Geist e Geist Mono sono fallback dichiarati. Diagram Design, doc-inline, statico.</footer>
+  </main>
+</body>
+</html>

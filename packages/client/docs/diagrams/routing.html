@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copilot Proxy - instradamento</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #fafaf7; color: #000000; font-family: 'Geist', sans-serif; }
+    .frame { width: 960px; max-width: 100%; min-width: 0; margin: auto; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .heading { font-family: 'Instrument Serif', serif; font-size: 28px; font-weight: 400; }
+    .name { font-family: 'Geist', sans-serif; font-size: 12px; font-weight: 600; }
+    .msg { font-family: 'Geist', sans-serif; font-size: 11px; fill: #000000; }
+    .detail { font-family: 'Geist Mono', monospace; font-size: 9px; fill: #666666; }
+    .tag, .label { font-family: 'Geist Mono', monospace; font-size: 8px; fill: #666666; letter-spacing: 0.06em; }
+    .red { fill: #ff0005; }
+    .note { font-family: 'Geist', sans-serif; font-size: 11px; fill: #666666; }
+    .halo { paint-order: stroke; stroke: #fafaf7; stroke-width: 5px; stroke-linejoin: round; }
+    .box { fill: #fafaf7; stroke: #bfbfbc; stroke-width: 1; }
+    .own { fill: #fafaf7; stroke: #ff0005; stroke-width: 2; }
+    .private { fill: #fafaf7; stroke: #000000; stroke-width: 1.5; }
+    .muted { fill: #f0f0ed; stroke: #bfbfbc; stroke-width: 1; stroke-dasharray: 3,3; }
+    .http { fill: none; stroke: #000000; stroke-width: 1.2; marker-end: url(#arrow-link); }
+    .local { fill: none; stroke: #666666; stroke-width: 1.2; marker-end: url(#arrow); }
+    .async { fill: none; stroke: #666666; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow); }
+    .bad { fill: none; stroke: #ff0005; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow-red); }
+    .life { stroke: #bfbfbc; stroke-width: 1; stroke-dasharray: 2,4; }
+    footer { margin-top: 16px; font-size: 11px; color: #666666; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 630" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="routing-title routing-desc">
+        <title id="routing-title">Come ogni client arriva al proxy</title>
+        <desc id="routing-desc">Copilot Chat usa overrideCapiUrl, Copilot CLI e il runtime agentico usano COPILOT_API_URL, CLI e harness una base URL, i proxy intermedi l'URL del provider Copilot. I client basati sul Copilot Language Server vanno diretti a GitHub e non sono misurati.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#666666"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000000"/></marker>
+          <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff0005"/></marker>
+        </defs>
+        <rect width="960" height="630" fill="#fafaf7"/>
+        <text x="40" y="40" class="tag">BIP RED / COPILOT PROXY / INSTRADAMENTO</text>
+        <text x="40" y="80" class="heading">Ogni client ha la sua leva. Alcuni non ne hanno.</text>
+        <text x="40" y="136" class="tag">CLIENT</text>
+        <text x="308" y="136" class="tag">COME SI INSTRADA</text>
+        <text x="608" y="136" class="tag">PROXY LOCALE</text>
+        <text x="784" y="136" class="tag">UPSTREAM</text>
+        <rect x="40" y="152" width="228" height="64" rx="6" class="box"/>
+        <text x="56" y="172" class="tag">ESTENSIONE</text>
+        <text x="56" y="194" class="name">Copilot Chat in VS Code</text>
+        <text x="56" y="211" class="detail">Insiders, VSCodium, Cursor, ...</text>
+        <rect x="308" y="152" width="252" height="64" rx="6" class="box"/>
+        <text x="324" y="172" class="tag">IMPOSTAZIONI UTENTE · --vscode</text>
+        <text x="324" y="194" class="name">overrideCapiUrl</text>
+        <text x="324" y="211" class="detail">+ overrideAuthType: "token"</text>
+        <path d="M268 184 H308" class="http"/>
+        <path d="M560 184 H608" class="http"/>
+        <rect x="40" y="232" width="228" height="64" rx="6" class="box"/>
+        <text x="56" y="252" class="tag">RUNTIME AGENTICO</text>
+        <text x="56" y="274" class="name">Copilot CLI</text>
+        <text x="56" y="291" class="detail">e sessioni "Copilot CLI" in VS Code</text>
+        <rect x="308" y="232" width="252" height="64" rx="6" class="box"/>
+        <text x="324" y="252" class="tag">AMBIENTE UTENTE · --vscode</text>
+        <text x="324" y="274" class="name">COPILOT_API_URL</text>
+        <text x="324" y="291" class="detail">riaprire l'editor dopo il setup</text>
+        <path d="M268 264 H308" class="http"/>
+        <path d="M560 264 H608" class="http"/>
+        <rect x="40" y="312" width="228" height="64" rx="6" class="box"/>
+        <text x="56" y="332" class="tag">CLI E HARNESS</text>
+        <text x="56" y="354" class="name">Base URL configurabile</text>
+        <text x="56" y="371" class="detail">protocollo dell'upstream</text>
+        <rect x="308" y="312" width="252" height="64" rx="6" class="box"/>
+        <text x="324" y="332" class="tag">MANUALE</text>
+        <text x="324" y="354" class="name">http://127.0.0.1:8787</text>
+        <text x="324" y="371" class="detail">opzionale /u/&lt;dev&gt;/p/&lt;progetto&gt;</text>
+        <path d="M268 344 H308" class="http"/>
+        <path d="M560 344 H608" class="http"/>
+        <rect x="40" y="392" width="228" height="64" rx="6" class="box"/>
+        <text x="56" y="412" class="tag">HARNESS + PROXY INTERMEDIO</text>
+        <text x="56" y="434" class="name">copilot-api, LiteLLM, ...</text>
+        <text x="56" y="451" class="detail">Claude Code, OpenCode, Cline</text>
+        <rect x="308" y="392" width="252" height="64" rx="6" class="box"/>
+        <text x="324" y="412" class="tag">NEL PROXY INTERMEDIO</text>
+        <text x="324" y="434" class="name">URL del provider Copilot</text>
+        <text x="324" y="451" class="detail">-&gt; http://127.0.0.1:8787</text>
+        <path d="M268 424 H308" class="http"/>
+        <path d="M560 424 H608" class="http"/>
+        <rect x="40" y="472" width="228" height="64" rx="6" class="muted"/>
+        <text x="56" y="492" class="tag">COPILOT LANGUAGE SERVER</text>
+        <text x="56" y="514" class="name">JetBrains, Eclipse, Xcode</text>
+        <text x="56" y="531" class="detail">e Visual Studio</text>
+        <rect x="308" y="472" width="252" height="64" rx="6" class="muted"/>
+        <text x="324" y="492" class="tag">NESSUN OVERRIDE</text>
+        <text x="324" y="514" class="name">Solo forward proxy HTTP</text>
+        <text x="324" y="531" class="detail">servirebbe decifrare il TLS</text>
+        <path d="M268 504 H308" class="local"/>
+        <path d="M560 504 H784" class="bad"/>
+        <text x="672" y="498" text-anchor="middle" class="label halo">DIRETTO · NON MISURATO</text>
+        <rect x="608" y="152" width="128" height="304" rx="6" class="own"/>
+        <text x="624" y="172" class="tag">PROXY LOCALE</text>
+        <text x="624" y="194" class="name">copilot-proxy</text>
+        <text x="624" y="210" class="detail">127.0.0.1:8787</text>
+        <text x="624" y="420" class="detail">un processo,</text>
+        <text x="624" y="434" class="detail">tutti i client</text>
+        <rect x="784" y="152" width="136" height="384" rx="6" class="box"/>
+        <text x="800" y="172" class="tag">UPSTREAM</text>
+        <text x="800" y="194" class="name">GitHub Copilot</text>
+        <text x="800" y="210" class="detail">api.githubcopilot.com</text>
+        <path d="M736 304 H784" class="http"/>
+        <text x="64" y="562" class="note">Le code completions usano un endpoint diverso e non consumano AI credits: non passano dal proxy e non servono.</text>
+        <line x1="40" y1="580" x2="920" y2="580" stroke="#bfbfbc"/>
+        <line x1="40" y1="604" x2="72" y2="604" stroke="#000000"/>
+        <text x="84" y="608" class="note">Instradato e misurato</text>
+        <line x1="250" y1="604" x2="282" y2="604" stroke="#ff0005" stroke-dasharray="5,4"/>
+        <text x="294" y="608" class="note">Non misurato</text>
+        <rect x="406" y="596" width="16" height="16" rx="2" fill="#fafaf7" stroke="#ff0005" stroke-width="2"/>
+        <text x="432" y="608" class="note">Pacchetto npm</text>
+        <rect x="550" y="596" width="16" height="16" rx="2" fill="#fafaf7" stroke="#bfbfbc"/>
+        <text x="576" y="608" class="note">Configurazione</text>
+      </svg>
+    </div>
+    <footer>Palette da bip.red, fondo e grigi adattati per contrasto. PolySans non incluso: Instrument Serif, Geist e Geist Mono sono fallback dichiarati. Diagram Design, doc-inline, statico.</footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copilot Proxy - ciclo di una richiesta</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #fafaf7; color: #000000; font-family: 'Geist', sans-serif; }
+    .frame { width: 960px; max-width: 100%; min-width: 0; margin: auto; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .heading { font-family: 'Instrument Serif', serif; font-size: 28px; font-weight: 400; }
+    .name { font-family: 'Geist', sans-serif; font-size: 12px; font-weight: 600; }
+    .msg { font-family: 'Geist', sans-serif; font-size: 11px; fill: #000000; }
+    .detail { font-family: 'Geist Mono', monospace; font-size: 9px; fill: #666666; }
+    .tag, .label { font-family: 'Geist Mono', monospace; font-size: 8px; fill: #666666; letter-spacing: 0.06em; }
+    .red { fill: #ff0005; }
+    .note { font-family: 'Geist', sans-serif; font-size: 11px; fill: #666666; }
+    .halo { paint-order: stroke; stroke: #fafaf7; stroke-width: 5px; stroke-linejoin: round; }
+    .box { fill: #fafaf7; stroke: #bfbfbc; stroke-width: 1; }
+    .own { fill: #fafaf7; stroke: #ff0005; stroke-width: 2; }
+    .private { fill: #fafaf7; stroke: #000000; stroke-width: 1.5; }
+    .muted { fill: #f0f0ed; stroke: #bfbfbc; stroke-width: 1; stroke-dasharray: 3,3; }
+    .http { fill: none; stroke: #000000; stroke-width: 1.2; marker-end: url(#arrow-link); }
+    .local { fill: none; stroke: #666666; stroke-width: 1.2; marker-end: url(#arrow); }
+    .async { fill: none; stroke: #666666; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow); }
+    .bad { fill: none; stroke: #ff0005; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow-red); }
+    .life { stroke: #bfbfbc; stroke-width: 1; stroke-dasharray: 2,4; }
+    footer { margin-top: 16px; font-size: 11px; color: #666666; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="lifecycle-title lifecycle-desc">
+        <title id="lifecycle-title">Ciclo di vita di una richiesta</title>
+        <desc id="lifecycle-desc">Il proxy attribuisce la richiesta, ispeziona il corpo, rileva il progetto dai path solo se nessun segnale esplicito lo ha nominato, inoltra a Copilot, duplica lo stream verso il parser e a fine stream accoda un evento che il forwarder consegna in batch al collector.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#666666"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000000"/></marker>
+          <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff0005"/></marker>
+        </defs>
+        <rect width="960" height="720" fill="#fafaf7"/>
+        <text x="40" y="40" class="tag">BIP RED / COPILOT PROXY / CICLO DI UNA RICHIESTA</text>
+        <text x="40" y="80" class="heading">Lo stream passa subito. La misura arriva dopo.</text>
+        <line x1="100" y1="168" x2="100" y2="640" class="life"/>
+        <line x1="260" y1="168" x2="260" y2="640" class="life"/>
+        <line x1="420" y1="168" x2="420" y2="640" class="life"/>
+        <line x1="580" y1="168" x2="580" y2="640" class="life"/>
+        <line x1="730" y1="168" x2="730" y2="640" class="life"/>
+        <line x1="860" y1="168" x2="860" y2="640" class="life"/>
+        <rect x="40" y="116" width="120" height="52" rx="6" class="box"/>
+        <text x="56" y="136" class="tag">CLIENT</text>
+        <text x="56" y="158" class="name">Editor / CLI</text>
+        <rect x="200" y="116" width="120" height="52" rx="6" class="own"/>
+        <text x="216" y="136" class="tag">PROXY</text>
+        <text x="216" y="158" class="name">copilot-proxy</text>
+        <rect x="360" y="116" width="120" height="52" rx="6" class="box"/>
+        <text x="376" y="136" class="tag">LOCALE</text>
+        <text x="376" y="158" class="name">Repository</text>
+        <rect x="520" y="116" width="120" height="52" rx="6" class="box"/>
+        <text x="536" y="136" class="tag">UPSTREAM</text>
+        <text x="536" y="158" class="name">Copilot</text>
+        <rect x="670" y="116" width="120" height="52" rx="6" class="box"/>
+        <text x="686" y="136" class="tag">FORWARDER</text>
+        <text x="686" y="158" class="name">Coda + spool</text>
+        <rect x="800" y="116" width="120" height="52" rx="6" class="private"/>
+        <text x="816" y="136" class="tag">RACCOLTA</text>
+        <text x="816" y="158" class="name">Collector</text>
+        <path d="M100 200 H256" class="http"/>
+        <text x="180.0" y="193" text-anchor="middle" class="msg halo">POST · body + token</text>
+        <path d="M260 222 H296 V236 H264" class="local"/>
+        <text x="304" y="233" class="msg halo">1 · attribuzione esplicita: /p, /u, X-Project-Id, Proxy-Authorization, ATTRIBUTION_TOKENS</text>
+        <path d="M260 262 H296 V276 H264" class="local"/>
+        <text x="304" y="273" class="msg halo">2 · ispezione del body (primi 4 MiB): modello, sessione, stream_options se assente</text>
+        <path d="M260 318 H416" class="local"/>
+        <text x="340.0" y="311" text-anchor="middle" class="msg halo">3 · solo se fallback: path</text>
+        <path d="M420 350 H264" class="local"/>
+        <text x="340.0" y="343" text-anchor="middle" class="msg halo">progetto dal remote</text>
+        <text x="428" y="338" class="detail halo">oppure progetto della sessione (30 min)</text>
+        <path d="M260 400 H576" class="http"/>
+        <text x="420.0" y="393" text-anchor="middle" class="msg halo">4 · inoltro, senza header di attribuzione</text>
+        <path d="M580 436 H264" class="http"/>
+        <text x="420.0" y="429" text-anchor="middle" class="msg halo">stream SSE / JSON</text>
+        <path d="M260 472 H104" class="http"/>
+        <text x="180.0" y="465" text-anchor="middle" class="msg halo">stesso stream</text>
+        <path d="M260 490 H296 V504 H264" class="local"/>
+        <text x="304" y="501" class="msg halo">5 · tee: il parser legge i contatori mentre lo stream passa</text>
+        <path d="M260 548 H726" class="async"/>
+        <text x="495.0" y="541" text-anchor="middle" class="msg halo">6 · a fine stream: un evento, solo se ci sono contatori</text>
+        <path d="M730 592 H856" class="async"/>
+        <text x="795.0" y="585" text-anchor="middle" class="msg halo">7 · ogni 5 s o a 100</text>
+        <path d="M860 622 H734" class="async"/>
+        <text x="795.0" y="615" text-anchor="middle" class="msg halo">202 accepted</text>
+        <text x="40" y="666" class="note">Se lo stream si interrompe si registra comunque quanto letto. Le risposte senza contatori (es. /models) non generano eventi.</text>
+        <line x1="40" y1="680" x2="920" y2="680" stroke="#bfbfbc"/>
+        <line x1="40" y1="704" x2="72" y2="704" stroke="#000000"/>
+        <text x="84" y="708" class="note">Traffico Copilot</text>
+        <line x1="220" y1="704" x2="252" y2="704" stroke="#666666"/>
+        <text x="264" y="708" class="note">Elaborazione locale</text>
+        <line x1="418" y1="704" x2="450" y2="704" stroke="#666666" stroke-dasharray="5,4"/>
+        <text x="462" y="708" class="note">Asincrono, dopo la risposta</text>
+      </svg>
+    </div>
+    <footer>Palette da bip.red, fondo e grigi adattati per contrasto. PolySans non incluso: Instrument Serif, Geist e Geist Mono sono fallback dichiarati. Diagram Design, doc-inline, statico.</footer>
+  </main>
+</body>
+</html>

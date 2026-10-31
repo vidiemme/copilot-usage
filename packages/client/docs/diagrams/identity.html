@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Copilot Proxy - identita' del developer</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #fafaf7; color: #000000; font-family: 'Geist', sans-serif; }
+    .frame { width: 960px; max-width: 100%; min-width: 0; margin: auto; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    svg { width: 100%; min-width: 960px; display: block; }
+    .heading { font-family: 'Instrument Serif', serif; font-size: 28px; font-weight: 400; }
+    .name { font-family: 'Geist', sans-serif; font-size: 12px; font-weight: 600; }
+    .msg { font-family: 'Geist', sans-serif; font-size: 11px; fill: #000000; }
+    .detail { font-family: 'Geist Mono', monospace; font-size: 9px; fill: #666666; }
+    .tag, .label { font-family: 'Geist Mono', monospace; font-size: 8px; fill: #666666; letter-spacing: 0.06em; }
+    .red { fill: #ff0005; }
+    .note { font-family: 'Geist', sans-serif; font-size: 11px; fill: #666666; }
+    .halo { paint-order: stroke; stroke: #fafaf7; stroke-width: 5px; stroke-linejoin: round; }
+    .box { fill: #fafaf7; stroke: #bfbfbc; stroke-width: 1; }
+    .own { fill: #fafaf7; stroke: #ff0005; stroke-width: 2; }
+    .private { fill: #fafaf7; stroke: #000000; stroke-width: 1.5; }
+    .muted { fill: #f0f0ed; stroke: #bfbfbc; stroke-width: 1; stroke-dasharray: 3,3; }
+    .http { fill: none; stroke: #000000; stroke-width: 1.2; marker-end: url(#arrow-link); }
+    .local { fill: none; stroke: #666666; stroke-width: 1.2; marker-end: url(#arrow); }
+    .async { fill: none; stroke: #666666; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow); }
+    .bad { fill: none; stroke: #ff0005; stroke-width: 1.2; stroke-dasharray: 5,4; marker-end: url(#arrow-red); }
+    .life { stroke: #bfbfbc; stroke-width: 1; stroke-dasharray: 2,4; }
+    footer { margin-top: 16px; font-size: 11px; color: #666666; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <div class="diagram-container">
+      <svg viewBox="0 0 960 600" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="identity-title identity-desc">
+        <title id="identity-title">Come si ricava l'identita' del developer</title>
+        <desc id="identity-desc">Il developer si ricava dal prefisso /u/, dall'header X-Developer-Id, dalla mappa ATTRIBUTION_TOKENS oppure da uno pseudonimo: SHA-256 con salt del campo stabile del token Copilot, troncato a 16 caratteri. Nome ed email facoltativi viaggiano negli header del batch.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#666666"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#000000"/></marker>
+          <marker id="arrow-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#ff0005"/></marker>
+        </defs>
+        <rect width="960" height="600" fill="#fafaf7"/>
+        <text x="40" y="40" class="tag">BIP RED / COPILOT PROXY / IDENTITA' DEL DEVELOPER</text>
+        <text x="40" y="80" class="heading">Una persona, lo stesso id, su ogni postazione.</text>
+        <text x="40" y="128" class="tag">DEVELOPERID · VINCE IL PRIMO SEGNALE PRESENTE</text>
+        <rect x="40" y="140" width="300" height="56" rx="6" class="box"/>
+        <text x="56" y="164" class="name">/u/&lt;developer&gt; nel path</text>
+        <text x="56" y="181" class="detail">base URL dedicata</text>
+        <text x="324" y="160" text-anchor="end" class="tag">path</text>
+        <path d="M190 196 V216" class="local"/>
+        <text x="198" y="210" class="label halo">ASSENTE</text>
+        <rect x="40" y="216" width="300" height="56" rx="6" class="box"/>
+        <text x="56" y="240" class="name">Header X-Developer-Id</text>
+        <text x="56" y="257" class="detail">impostato dal client</text>
+        <text x="324" y="236" text-anchor="end" class="tag">header</text>
+        <path d="M190 272 V292" class="local"/>
+        <text x="198" y="286" class="label halo">ASSENTE</text>
+        <rect x="40" y="292" width="300" height="56" rx="6" class="box"/>
+        <text x="56" y="316" class="name">ATTRIBUTION_TOKENS</text>
+        <text x="56" y="333" class="detail">mappa token -&gt; developerId</text>
+        <text x="324" y="312" text-anchor="end" class="tag">token</text>
+        <path d="M190 348 V368" class="local"/>
+        <text x="198" y="362" class="label halo">ASSENTE</text>
+        <rect x="40" y="368" width="300" height="56" rx="6" class="own"/>
+        <text x="56" y="392" class="name">Token upstream (Bearer)</text>
+        <text x="56" y="409" class="detail">pseudonimo, vedi a destra</text>
+        <text x="324" y="388" text-anchor="end" class="tag">pseudonym</text>
+        <path d="M190 424 V444" class="local"/>
+        <text x="198" y="438" class="label halo">ASSENTE</text>
+        <rect x="40" y="444" width="300" height="56" rx="6" class="muted"/>
+        <text x="56" y="468" class="name">Nessun segnale</text>
+        <text x="56" y="485" class="detail">developerId = unknown</text>
+        <text x="324" y="464" text-anchor="end" class="tag">fallback</text>
+        <text x="40" y="556" class="note">La sorgente viaggia nel campo developerSource.</text>
+        <path d="M340 396 H430 Q438 396 438 388 V176 Q438 168 446 168 H520" class="local"/>
+        <text x="520" y="128" class="tag">PSEUDONIMO · CALCOLATO SUL CLIENT</text>
+        <rect x="520" y="140" width="400" height="56" rx="6" class="box"/>
+        <text x="536" y="164" class="name">tid=...;exp=...;sku=...;u=...</text>
+        <text x="536" y="181" class="detail">token Copilot: ruota ogni pochi minuti</text>
+        <rect x="520" y="216" width="400" height="56" rx="6" class="box"/>
+        <text x="536" y="240" class="name">Primo campo stabile fra u, tid, oid, sid</text>
+        <text x="536" y="257" class="detail">token non in formato chiave=valore: tutto il token</text>
+        <rect x="520" y="292" width="400" height="56" rx="6" class="box"/>
+        <text x="536" y="316" class="name">SHA-256( salt + ':' + campo )</text>
+        <text x="536" y="333" class="detail">salt costante del pacchetto, uguale su ogni postazione</text>
+        <rect x="520" y="368" width="400" height="56" rx="6" class="own"/>
+        <text x="536" y="392" class="name">794d98febee52e98</text>
+        <text x="536" y="409" class="detail">16 caratteri esadecimali, stabile nel tempo</text>
+        <path d="M720 196 V216" class="local"/>
+        <path d="M720 272 V292" class="local"/>
+        <path d="M720 348 V368" class="local"/>
+        <rect x="520" y="448" width="400" height="84" rx="6" class="box"/>
+        <text x="536" y="468" class="tag">NOME ED EMAIL · FACOLTATIVI</text>
+        <text x="536" y="490" class="name">X-Developer-Name, X-Developer-Email</text>
+        <text x="536" y="507" class="detail">da git config al setup, nell'header del batch</text>
+        <text x="536" y="520" class="detail">--anonymous: non inviati; vince il nome dato in dashboard</text>
+        <text x="520" y="556" class="note">Il salt e' pubblico: lo pseudonimo e' un identificatore tecnico, non anonimato.</text>
+        <text x="40" y="576" class="note">Cambiare il salt spezza lo storico: da quel momento la stessa persona compare con un id nuovo.</text>
+      </svg>
+    </div>
+    <footer>Palette da bip.red, fondo e grigi adattati per contrasto. PolySans non incluso: Instrument Serif, Geist e Geist Mono sono fallback dichiarati. Diagram Design, doc-inline, statico.</footer>
+  </main>
+</body>
+</html>

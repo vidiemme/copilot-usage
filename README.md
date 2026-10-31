@@ -1,624 +1,273 @@
 # copilot-usage
 
-Proxy di misurazione del consumo di token GitHub Copilot, con attribuzione **per progetto**
-oltre che per persona.
+Misura il consumo di token di GitHub Copilot e lo attribuisce **al progetto**, oltre che
+alla persona.
 
-Il problema che risolve: le statistiche native di Copilot sono verticali per utente, quindi
-non dicono quanto costa un cliente o una commessa quando piu' developer lavorano su piu'
-progetti. Un client locale si mette in mezzo al traffico, legge i contatori di token che il
-modello restituisce e li manda a un servizio centrale, che li converte in costo con il listino
-GitHub e li scrive su Postgres.
+Le statistiche native di Copilot sono verticali per utente: non dicono quanto costa un cliente
+o una commessa quando piu' developer lavorano su piu' progetti. Un proxy locale si mette in
+mezzo al traffico, legge i contatori di token che il modello restituisce, riconosce il
+repository su cui si sta lavorando e manda i contatori a un servizio centrale, che li converte
+in costo con il listino GitHub e li conserva.
 
-Questo repository contiene la **meta' pubblica**: il proxy che gira sulla postazione del
-developer e il contratto che parla con il servizio di raccolta. Il servizio di raccolta sta in
-un repository separato e privato, perche' custodisce listino, schema del database e dati di
-costo aziendali.
+![Il proxy sulla macchina del developer inoltra la conversazione a GitHub Copilot e invia solo eventi di consumo al collector privato, che prezza, salva su Postgres ed espone la console.](packages/client/docs/diagrams/system.png)
 
-| Client | Attribuzione |
-| --- | --- |
-| Claude Code, Codex e altri CLI agentici | **per progetto** e per developer |
-| Copilot Chat in VS Code e derivati (Cursor, Windsurf, Antigravity, ...) | **per progetto** e per developer, dedotto dai path |
-| Harness che arrivano a Copilot tramite un proprio proxy (`copilot-api`, LiteLLM, ...) | **per progetto** e per developer, se quel proxy permette di cambiare l'URL di Copilot: vedi [Harness e proxy intermedi](#harness-e-proxy-intermedi-verso-copilot) |
+[Sorgente HTML del diagramma](packages/client/docs/diagrams/system.html)
+
+## Dove trovare cosa
+
+| Documento | Per chi | Cosa contiene |
+| --- | --- | --- |
+| Questo README | chi sviluppa o rilascia il proxy | architettura, scelte di fondo, sviluppo, release |
+| [README del client](packages/client/README.md), anche su npm | developer e chi fa il rollout | installazione, editor e CLI, attribuzione, privacy, diagnostica |
+| [README del contratto](packages/shared/README.md), anche su npm | chi implementa un collector | protocollo, campi dell'evento, risposte, compatibilita' |
+| README di `copilot-usage-collector`, repository privato | chi gestisce il servizio | deploy, configurazione, listino, reporting, schema, riconciliazione |
+
+Ogni argomento ha **un solo documento di riferimento**; gli altri lo riassumono e ci rimandano.
 
 ## Le due parti
 
-```
-                  macchina del developer          cloud
-                 ┌────────────────────────┐     ┌──────────────────┐
-VS Code / CLI ──►│ client (proxy)         │────►│ server           │
-                 │  misura, non prezza    │ API │  prezza, salva   │
-                 └───────────┬────────────┘     └────────┬─────────┘
-                             │                           │
-                             ▼                           ▼
-                  api.githubcopilot.com            Postgres
-```
-
-| | `@vidiemme/copilot-proxy` | `@vidiemme/copilot-usage-collector` |
+| | `@vidiemme/copilot-proxy` | `copilot-usage-collector` |
 | --- | --- | --- |
 | Dove sta | **questo repository**, pubblico su npm | repository separato, privato |
 | Dove gira | postazione del developer | cloud, sempre disponibile |
-| Cosa fa | proxy trasparente, estrae i contatori, riconosce il progetto | applica il listino, deduplica, persiste, espone il reporting |
-| Cosa gli serve | `COLLECTOR_URL` e `COLLECTOR_TOKEN` | accesso al database |
+| Cosa fa | proxy trasparente, estrae i contatori, riconosce progetto e developer | applica il listino, deduplica, persiste, espone il reporting |
+| Cosa gli serve | il token di ingest | accesso al database |
 | Cosa **non** ha | credenziali del database, listino prezzi | token Copilot, prompt, path locali |
 
-Il taglio non e' arbitrario. Il listino sta sul server perche' aggiornarlo non deve richiedere
-di ridistribuire n postazioni, e perche' un client vecchio o manomesso non deve poter
-dichiarare quanto ha speso: manda solo contatori grezzi. Il database sta dietro il server
-perche' le sue credenziali non devono finire su n macchine. Il traffico Copilot **non** passa
-dal cloud: il client parla direttamente con `api.githubcopilot.com`, e al collector arrivano
-solo eventi di consumo.
+Il terzo pacchetto, [`@vidiemme/copilot-usage-contract`](packages/shared/README.md), e' il
+contratto sul filo: l'unica cosa che le due parti condividono.
 
-E' anche il motivo per cui i due repository sono separati: qui non c'e' niente da tenere
-riservato, e un pacchetto che i developer installano con `npx` e' piu' credibile se il codice
-si puo' leggere. Il contratto sul filo (`@vidiemme/copilot-usage-contract`) e' pubblico per la
-stessa ragione: e' l'interfaccia, non il contenuto.
+Il taglio non e' arbitrario:
 
-Il client non dipende mai dalla raggiungibilita' del server: se il collector e' giu' o la rete
-manca, le richieste Copilot continuano a passare e gli eventi restano su un file di spool,
-rispediti al primo tentativo utile. Lo stesso vale se il collector rifiuta il token (401/403):
-un token ruotato si sistema sulla postazione, e nel frattempo la misura non va persa. La
-chiave `request_id` rende i rinvii innocui.
+- **il listino sta sul server**, perche' aggiornarlo non deve richiedere di ridistribuire n
+  postazioni, e perche' un client vecchio o manomesso non deve poter dichiarare quanto ha
+  speso: manda solo contatori grezzi;
+- **il database sta dietro il server**, perche' le sue credenziali non devono finire su n
+  macchine;
+- **il traffico Copilot non passa dal cloud**: il proxy parla direttamente con
+  `api.githubcopilot.com`, e al collector arrivano solo eventi di consumo.
+
+E' anche il motivo per cui i repository sono due: qui non c'e' niente da tenere riservato, e
+un pacchetto che i developer installano con `npx` e' piu' credibile se il codice si puo'
+leggere. Il collector custodisce invece listino, schema e dati di costo aziendali.
+
+Il proxy non dipende mai dalla raggiungibilita' del collector: se il collector e' giu', la rete
+manca o il token e' stato ruotato, le richieste Copilot continuano a passare e gli eventi
+aspettano in uno spool su disco. La chiave `requestId` rende innocui i rinvii. I dettagli,
+compresi i limiti, sono nel [README del client](packages/client/README.md#collector-non-disponibile).
 
 > **Modello di fiducia.** Il token di ingest e' un segreto condiviso a livello di
-> organizzazione: chiunque lo possieda puo' dichiarare qualsiasi `developer_id` e
-> `project_id`. E' contabilita' analitica interna, **non** un confine di sicurezza. Se serve
-> attribuzione non ripudiabile occorrono credenziali per postazione e un'identita' verificata
-> lato server: qui non c'e'.
+> organizzazione: chiunque lo possieda puo' dichiarare qualsiasi developer e progetto. E'
+> contabilita' analitica interna, **non** un confine di sicurezza. Per un'attribuzione non
+> ripudiabile servirebbero credenziali per postazione e un'identita' verificata lato server.
 
-## Come funziona la misura
+## Cosa viene misurato
 
-Il client e' un passthrough trasparente: inoltra la richiesta cosi' com'e' e duplica il flusso
-di risposta verso un parser di usage. Non tocca il contenuto della conversazione e **non
-persiste mai prompt o completion**, solo contatori.
-
-Riconosce entrambi i dialetti senza configurazione:
-
-| Formato | Dove sta l'usage |
-| --- | --- |
-| Anthropic Messages | `message_start` (input, cache read, cache write) + `message_delta` (output) |
-| OpenAI / Copilot chat completions | chunk finale con `usage`, richiede `stream_options.include_usage` |
-| OpenAI Responses API (`/responses`, Codex, modelli GPT in VS Code) | evento `response.completed` (o `incomplete` / `failed`), in `response.usage` |
-
-Per le chat completions il client **inietta automaticamente** `stream_options: { include_usage: true }`
-nelle richieste in streaming: senza quel flag l'upstream non restituirebbe alcun contatore. La
-Responses API include sempre l'usage e non accetta quel parametro, quindi il corpo resta intatto.
-
-Nel formato OpenAI `prompt_tokens` comprende gia' i token letti da cache e, sui modelli che lo
-fatturano (GPT-5.6, GPT-6), quelli scritti in cache: vengono sottratti dall'input e contati a
-parte, cosi' ognuno ha la sua tariffa.
-
-## Avvio
-
-Serve Node >= 22.19 (richiesto da Undici 8).
-
-### 1. Il servizio di raccolta
-
-Va avviato per primo, dal suo repository: e' lui a distribuire il `COLLECTOR_URL` e il token di
-ingest che serviranno a tutte le postazioni. Un solo token per tutta l'organizzazione.
-
-In Vidiemme e' gia' attivo su **`https://copilot-collector.swarm.vidiemme.it`**: l'endpoint di
-ingest da usare nel setup e' `https://copilot-collector.swarm.vidiemme.it/v1/usage`, il token
-va chiesto a chi lo amministra.
-
-### 2. Il client, su ogni postazione
-
-Il client e' pubblicato su npm: sulle postazioni non serve clonare questo repository, ne'
-creare file di configurazione a mano. Endpoint di raccolta, salt degli pseudonimi e cartelle
-di lavoro sono default committati nel pacchetto ([`src/defaults.ts`](packages/client/src/defaults.ts)):
-l'unica cosa da procurarsi e' il token di ingest.
-
-```bash
-# una volta sola, e poi basta: il token viene chiesto in modo nascosto
-npx @vidiemme/copilot-proxy@latest setup --vscode --autostart
-
-# per un rollout non interattivo (MDM, script)
-COLLECTOR_TOKEN=<token> npx @vidiemme/copilot-proxy@latest setup --vscode --autostart
-
-# quando qualcosa non torna
-npx @vidiemme/copilot-proxy@latest doctor
-
-# versione, eventi misurati e consegnati, spool in attesa
-npx @vidiemme/copilot-proxy@latest status
-```
-
-Aggiornare l'endpoint di raccolta o il salt non richiede quindi di ripassare da n postazioni:
-si pubblica una versione nuova del pacchetto. Chi ha bisogno di scostarsi dai default ha
-comunque `--collector-url`, `--salt` e `--workspace-roots`.
-
-In modalita' interattiva il setup chiede anche:
-
-- la **porta locale** (default 8787), e verifica che sia libera: se e' occupata da un altro
-  programma si ferma e suggerisce `--port`. Per cambiarla in seguito basta
-  `setup --force --port 9000 --vscode --autostart`: `--force` riparte dalla configurazione
-  esistente, token compreso, e aggiorna editor e avvio automatico;
-- il **nome da mostrare nella dashboard**, proposto da `git config user.name` (e l'email da
-  `user.email`). `-` per restare anonimi; in modo non interattivo valgono `--name`,
-  `--email` e `--anonymous`. Il nome viaggia verso il collector insieme agli eventi, e il
-  collector non lo usa se un amministratore ne ha gia' assegnato uno dalla dashboard.
-
-Con `--vscode` e `--autostart` il rollout per il team e' una sola riga da
-incollare: la prima scrive le impostazioni utente di VS Code, la seconda registra
-il proxy fra i servizi dell'utente. Nessuno deve piu' lanciare `start` a mano ne'
-toccare `settings.json`.
-
-L'avvio automatico usa `launchd` su macOS (`~/Library/LaunchAgents`) e un unit
-utente `systemd` su Linux (`~/.config/systemd/user`); su Windows il comando
-stampa cosa mettere in Esecuzione automatica. Il servizio riparte da solo se il
-proxy muore, e il comando stampa la riga per disattivarlo.
-
-Una sola avvertenza: se hai installato via `npx`, il servizio punta dentro la
-cache di npx, che `npm cache clean` puo' svuotare. Per un avvio automatico che
-non si rompe mai, `npm i -g @vidiemme/copilot-proxy` e poi il setup con
-`--autostart`. Il comando lo segnala da solo, e segnala anche un Node gestito da
-nvm, fnm, asdf, mise, n o volta: il servizio registra il percorso esatto
-dell'eseguibile, che sparisce se quella versione viene disinstallata. Dopo un
-cambio di versione di Node basta `setup --autostart --force`.
-
-Per la manutenzione del servizio:
-
-```bash
-npm i -g @vidiemme/copilot-proxy@latest && copilot-proxy restart   # aggiornamento
-copilot-proxy uninstall                                             # rimozione
-```
-
-`restart` serve perche' il servizio continua a eseguire la versione caricata
-all'avvio finche' non viene riavviato; `doctor` segnala quando la versione in
-esecuzione e quella installata non coincidono. `uninstall` toglie l'avvio
-automatico ma lascia configurazione e impostazioni di VS Code: vanno tolte a
-mano, altrimenti Copilot non raggiunge piu' l'upstream.
-
-`setup` scrive `~/.config/copilot-proxy/config.json` con permessi `0600`
-(`%APPDATA%\copilot-proxy` su Windows; `COPILOT_PROXY_HOME` sposta la cartella).
-Il file contiene **solo cio' che si discosta dai default**: di norma il token e
-nient'altro. Le sue chiavi sono le stesse delle variabili d'ambiente elencate
-piu' sotto.
-
-I valori si sovrappongono in quest'ordine: **opzioni della riga di comando >
-variabili d'ambiente > file di configurazione > default**. Sotto `npx` non viene
-letto nessun `.env` dalla working directory: sarebbe una cartella qualsiasi, e
-raccogliere da li' un file altrui e' un rischio inutile.
-
-Il token di raccolta non ha un'opzione dedicata di proposito: gli argomenti dei
-processi sono visibili con `ps` agli altri utenti della macchina, e finirebbero
-nella cronologia della shell. Il comando lo chiede in modo nascosto, oppure lo
-legge da `COLLECTOR_TOKEN` (utile per un rollout via MDM).
-
-`--vscode` scrive le due impostazioni utente in VS Code e nei derivati installati — VS Code
-Insiders, VSCodium, Cursor, Windsurf, Antigravity — dopo aver salvato un `.bak`. Se
-`settings.json` contiene commenti — legittimo, e' JSONC — il comando non lo tocca e stampa
-lo snippet da incollare a mano.
-
-Le impostazioni dell'editor non bastano per Copilot CLI e per le sessioni "Copilot CLI"
-dentro VS Code: girano in un runtime separato che le ignora e va diretto a GitHub. Per
-questo `--vscode` imposta anche `COPILOT_API_URL=http://127.0.0.1:<porta>` nell'ambiente
-utente (persistente, vedi il README del client); serve chiudere e riaprire VS Code.
-
-JetBrains (IntelliJ, WebStorm, PhpStorm, Android Studio), Eclipse, Xcode e Visual Studio
-usano il Copilot Language Server, che non ha un URL di override: accetta solo un forward
-proxy HTTP, e misurare quel traffico richiederebbe di decifrare il TLS con una CA locale. Non
-e' implementato (vedi *L'alternativa: TLS interception* piu' sotto): il loro consumo non
-viene misurato.
-
-`doctor` verifica configurazione, cartelle di lavoro, raggiungibilita' e validita'
-del token verso il servizio di raccolta, quali editor passano dal proxy (un override
-commentato con `//` conta come assente e viene indicato come tale), `COPILOT_API_URL`
-per Copilot CLI e sessioni agentiche, eventi rimasti nello spool e proxy in ascolto.
-Esce con codice diverso da zero se qualcosa non va.
-Segnala come `WARN`, senza fallire, un proxy in esecuzione di versione diversa da
-quella installata, processi del runtime agentico avviati prima che `COPILOT_API_URL`
-fosse impostata (va chiuso e riaperto l'editor) e l'assenza di traffico misurato da
-oltre 24 ore: e' il sintomo tipico di un aggiornamento dell'estensione Copilot che
-ignora le impostazioni di debug. `status` mostra lo stesso instradamento e l'ultimo
-evento per tipo di client (estensione Copilot Chat, Copilot CLI / runtime agentico):
-se ne compare uno solo, l'altro probabilmente scavalca il proxy. Gli stessi contatori
-sono su `http://127.0.0.1:8787/_health`.
-
-Due vincoli che il client verifica all'avvio, e per cui si rifiuta di partire:
-
-- il salt degli pseudonimi deve essere **identico su tutte le macchine**: e' cio' che rende lo
-  pseudonimo della stessa persona confrontabile fra postazioni. Non viene generato a caso dal
-  `setup` proprio per questo — e' una costante del pacchetto. Cambiarlo spezza la continuita'
-  dello storico: da quel momento la stessa persona compare con un id nuovo.
-- `COLLECTOR_URL` in `http://` e' ammesso solo verso localhost: altrove il token di ingest
-  viaggerebbe in chiaro.
-
-#### Sviluppo del client da questo repository
-
-```bash
-npm install
-cp packages/client/.env.example packages/client/.env
-npm run dev
-```
-
-Il `.env` serve **solo** allo sviluppo del proxy, per puntarlo a un collector locale: le
-postazioni non ne hanno uno. In sviluppo viene caricato da `node --env-file-if-exists`, non da
-codice, cosi' il percorso `npx` e quello locale restano distinti.
-
-Verifica che tutto risponda prima di configurare gli editor:
-
-```bash
-curl -s localhost:8787/_health     # client
-npm run smoke                      # proxy reale contro un upstream finto
-npm run verify-detection           # rilevamento del progetto, con un collector finto
-npm run verify-e2e                 # client -> collector -> Postgres (collector gia' avviato)
-```
-
-`npm run smoke` e `npm run verify-detection` non richiedono ne' Postgres ne' collector: sono
-le verifiche eseguibili su qualsiasi postazione. `verify-e2e` invece attraversa tutto lo stack
-e richiede il servizio di raccolta in esecuzione.
-
-`UPSTREAM_BASE_URL` puo' puntare direttamente a `https://api.githubcopilot.com` oppure a un
-traduttore Anthropic↔Copilot che gia' usi (es. `copilot-api` su `http://127.0.0.1:4141`).
-Il client funziona in entrambi i casi.
-
-### 3. Pubblicare una nuova versione del client
-
-Da CI, spingendo un tag con la versione del proxy:
-
-```bash
-npm version 0.2.0 -w @vidiemme/copilot-proxy   # il contratto solo se e' cambiato
-git tag v0.2.0 && git push --tags
-```
-
-[`.github/workflows/publish.yml`](.github/workflows/publish.yml) esegue typecheck,
-test e build, verifica che il tag corrisponda alla versione del proxy, poi pubblica.
-Il contratto ha un suo ciclo di versioni: non e' legato al tag.
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) esegue le stesse verifiche,
-piu' `smoke` e `verify-detection`, a ogni push su `main` e su ogni pull request.
-
-L'autenticazione usa **trusted publishing**: GitHub Actions si autentica su npm via
-OIDC, con credenziali usa e getta. Non c'e' nessun token npm da mettere nei secret
-ne' da ruotare. Va configurato una volta su npmjs.com, nelle impostazioni di
-**entrambi** i pacchetti, indicando organizzazione, repository e `publish.yml` come
-workflow autorizzato. Il campo `repository` in `package.json` deve combaciare
-esattamente con il repository GitHub, altrimenti la pubblicazione viene rifiutata.
-Il codice deve quindi stare su GitHub: OIDC non e' disponibile per GitLab
-self-hosted, solo per GitHub Actions, GitLab.com e CircleCI.
-
-**Il primo rilascio ha un problema di uovo e gallina.** Il trusted publisher si
-configura dalle impostazioni di un pacchetto, e finche' il pacchetto non esiste
-sul registry quelle impostazioni non ci sono. Per uscirne senza pubblicare a mano:
-
-1. su npmjs.com, crea un **granular access token** in scrittura sullo scope `@vidiemme`,
-   con scadenza breve;
-2. mettilo nel secret `NPM_TOKEN` del repository GitHub;
-3. spingi il tag: la CI pubblica entrambi i pacchetti usando il token;
-4. su npmjs.com configura il trusted publishing sui due pacchetti appena creati;
-5. **cancella il secret e revoca il token.** Da qui in avanti la CI usa OIDC — il
-   CLI lo preferisce comunque al token quando disponibile.
-
-Il contratto viene pubblicato per primo, perche' il client ne importa a runtime la
-dimensione massima del batch e la somma dei token di input; se la sua versione e'
-gia' sul registry il passo viene saltato, cosi' un rilascio del solo client non
-fallisce. Entrambi i pacchetti hanno `publishConfig.access: public`, altrimenti npm
-tratterebbe uno scope come privato.
-
-In locale, se serve pubblicare a mano:
-
-```bash
-npm run release      # typecheck, test, contratto (se la versione e' nuova), poi proxy
-```
-
-## Attribuzione al progetto
-
-Il conteggio dei token e' la parte facile; capire **a quale progetto** imputarlo e' il vero
-problema, perche' nessun client manda la working directory. Il proxy risolve il progetto con
-questa precedenza:
-
-> I due client hanno sistemi di configurazione separati e che non si conoscono:
-> `.claude/settings.json` e' letto **solo** da Claude Code (il CLI, e l'estensione VS Code che
-> lancia quello stesso CLI), mentre l'estensione GitHub Copilot legge solo le impostazioni di
-> VS Code. Non esiste un file che li configuri entrambi: da qui il design a piu' livelli.
-
-### 1. Rilevamento automatico dai path (default, zero configurazione per repo)
-
-Le richieste di chat e agent mode trasportano il contesto di lavoro: file aperti, riferimenti
-espliciti, risultati degli strumenti dell'agente. Tutti nominano **file reali sul disco**. Il
-proxy risale da quei path fino al marker di progetto piu' vicino (`.git`) e ne usa il nome.
-
-```bash
-WORKSPACE_ROOTS=/Users/nome.cognome/Work
-PROJECT_MARKERS=.git,.hg,.svn
-```
-
-`WORKSPACE_ROOTS` delimita cosa e' lecito risolvere: un path fuori da quelle cartelle viene
-ignorato. Un repository nuovo funziona subito, senza toccare nulla. Quando una richiesta cita
-piu' progetti vince il piu' menzionato, cosi' un riferimento isolato a un altro repo non
-dirotta l'attribuzione.
-
-I path vengono riconosciuti in forma nativa (`/Users/...`, `C:\Users\...`), dentro URI
-`file://` percent-encoded e con gli escape del JSON, anche quando una cartella ha spazi nel
-nome. Il supporto Windows e' coperto dai test solo nella logica di riconoscimento: va provato
-su una postazione reale prima di contarci. L'associazione path → repository resta in cache
-10 minuti, cosi' un remote aggiunto o cambiato si vede senza riavviare il proxy.
-
-L'identita' del progetto **non** e' il nome della cartella — quello lo sceglie chi clona ed e'
-diverso da macchina a macchina — ma il percorso sul server Git, letto dal remote `origin`:
-
-| Remote | `project_id` | `repo_owner` | `repo_name` |
-| --- | --- | --- | --- |
-| `git@gitlab.com:acme/web/portal.git` | `acme/web/portal` | `acme` | `portal` |
-| `https://github.com/acme/legacy-crm.git` | `acme/legacy-crm` | `acme` | `legacy-crm` |
-
-I gruppi parent vengono conservati nella tabella `projects` (`repo_groups`), cosi' le
-aggregazioni per cliente, business unit o area restano possibili anche a posteriori, senza
-riclassificare a mano. Senza remote si ripiega sul nome della cartella: quei progetti si
-riconoscono perche' hanno `remote_url IS NULL`.
-
-Le richieste che non nominano alcun file (generazione del titolo, domande secche) ereditano il
-progetto dell'ultima richiesta della **stessa sessione** — la finestra dell'editor, distinta
-tramite l'header di sessione. Due progetti aperti in parallelo restano quindi separati.
-L'ereditarieta' scade dopo `PROJECT_STICKY_TTL_MS` (30 minuti).
-
-Cosa finisce a database: **solo l'identita' del repository**. Il corpo della richiesta viene
-letto in memoria e scartato.
-
-### 2. Prefisso di path — CLI agentici
-
-Base URL dedicata per repo, committata nel repo stesso. Ha la precedenza sul rilevamento
-automatico.
-
-`.claude/settings.json` del progetto:
-
-```json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787/p/acme-portal"
-  }
-}
-```
-
-I prefissi `/u/<developer>` e `/p/<progetto>` sono entrambi opzionali e accettati in qualsiasi
-ordine: `/u/g.carassale/p/acme-portal/v1/messages`.
-
-### 3. Header di progetto
-
-Se preferisci una base URL unica:
-
-```json
-{
-  "env": {
-    "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787",
-    "ANTHROPIC_CUSTOM_HEADERS": "X-Project-Id: acme-portal"
-  }
-}
-```
-
-### 4. Credenziali proxy — client che supportano un forward proxy
-
-Lo **username** delle credenziali proxy viene usato come id progetto:
-
-```
-http://acme-portal:token@127.0.0.1:8787
-```
-
-Utile per client configurabili per progetto (script, CI, tool custom). **Non** funziona per
-Copilot Chat in VS Code: vedi la sezione dedicata piu' sotto.
-
-### 5. Fallback
-
-Tutto il resto finisce in `unassigned`. La colonna `project_source` di `usage_events` dice da
-dove e' arrivata l'attribuzione — `workspace`, `session`, `path`, `header`, `proxy-auth`,
-`token`, `fallback` — e serve a misurare la copertura reale:
-
-```bash
-curl "localhost:8080/_usage/summary?groupBy=source"
-```
-
-L'id developer viene ricavato, in ordine, da `X-Developer-Id`, dalla mappa
-`ATTRIBUTION_TOKENS`, oppure da un **hash salato del token upstream** — pseudonimo stabile
-che non conserva credenziali.
-
-## Copilot Chat in VS Code
-
-**Una sola impostazione, identica su tutte le macchine, messa una volta.** Il progetto non sta
-nell'URL: lo deduce il proxy. Non servono profili, ne' configurazione per repository.
-
-Impostazioni utente (`Preferences: Open User Settings (JSON)`), distribuibili via MDM o
-Settings Sync:
-
-```json
-{
-  "github.copilot.advanced.debug.overrideCapiUrl": "http://127.0.0.1:8787",
-  "github.copilot.advanced.debug.overrideAuthType": "token"
-}
-```
-
-`overrideCapiUrl` e' l'endpoint di chat e agent mode, cioe' l'unico traffico fatturato in AI
-credits. `overrideAuthType: "token"` non e' un segreto ma una modalita': serve perche' con un
-URL di override l'estensione userebbe HMAC, che l'upstream reale rifiuterebbe.
-
-Perche' proprio queste due chiavi, e perche' nelle impostazioni **utente**:
-
-| Impostazione | Scope | Conseguenza |
+| Client | Misurato | Come arriva al proxy |
 | --- | --- | --- |
-| `http.proxy` | `APPLICATION` / `MACHINE` | non committabile in `.vscode/settings.json` |
-| `github.copilot.advanced.debug.overrideCapiUrl` | `userScopeOnly` | idem |
+| Copilot Chat in VS Code e derivati (Insiders, VSCodium, Cursor, Windsurf, Antigravity) | si' | impostazioni utente `overrideCapiUrl`, scritte da `setup --vscode` |
+| Copilot CLI e sessioni "Copilot CLI" in VS Code | si' | variabile `COPILOT_API_URL`, impostata da `setup --vscode` |
+| CLI e harness con base URL configurabile | si', se parlano un protocollo che l'upstream espone | base URL `http://127.0.0.1:8787`, configurata a mano |
+| Harness tramite un proxy intermedio (`copilot-api`, LiteLLM, ...) | si', se il proxy intermedio permette di cambiare l'URL di Copilot | URL del provider Copilot nel proxy intermedio |
+| JetBrains, Eclipse, Xcode, Visual Studio | **no** | il Copilot Language Server accetta solo un forward proxy: servirebbe decifrare il TLS |
+| Code completions | non serve | endpoint diverso, non consumano AI credits |
 
-Non esiste un modo per far passare il traffico di Copilot Chat dal proxy senza una di queste,
-o in alternativa senza un forward proxy con intercettazione TLS. Ma poiche' il valore e'
-costante per tutti, il costo di configurazione e' una riga sola, una volta sola.
+Il proxy **non traduce i protocolli**. Un client Anthropic come Claude Code raggiunge Copilot
+solo se l'upstream espone l'API Messages, o tramite un proxy intermedio che traduce; in quel
+caso il proxy di misura va messo dopo il traduttore. Vedi
+[Harness con proxy intermedio](packages/client/README.md#harness-con-proxy-intermedio).
 
-Da **non** impostare: `overrideProxyUrl` punta all'endpoint delle code completions, che non
-consumano AI credits — dirottarlo aggiunge rischio senza dare dati.
+Le impostazioni di override di Copilot Chat sono **di debug, non documentate**: possono
+sparire con un aggiornamento dell'estensione. `copilot-proxy doctor` segnala l'assenza di
+traffico da oltre 24 ore, che e' il sintomo tipico.
 
-> Sono impostazioni di **debug, non documentate e non supportate**: possono cambiare o sparire
-> tra una release e l'altra dell'estensione. Verifica dopo ogni aggiornamento che il traffico
-> arrivi ancora al proxy, e tieni pronto il rollback (rimuovere le due chiavi).
+L'unica alternativa per i client non coperti sarebbe un forward proxy con intercettazione TLS
+e una CA aziendale sulle macchine. **Non e' implementato**, e in Italia ricadrebbe nell'art. 4
+dello Statuto dei Lavoratori: andrebbe concordato con HR e legale e comunicato ai developer.
 
-Perche' il progetto venga riconosciuto serve che il client giri **sulla stessa macchina** del
-developer (i path sono locali) e che `WORKSPACE_ROOTS` copra le cartelle di lavoro. E' la
-ragione per cui il proxy e' locale e solo la raccolta e' centralizzata: un proxy condiviso
-vedrebbe path che non puo' risolvere, e resterebbe solo l'attribuzione esplicita per prefisso
-di path o header.
+## Come funziona, in breve
 
-### TLS
+**Instradamento.** Ogni famiglia di client ha la sua leva per cambiare l'URL di Copilot, e
+ignora quella degli altri: per questo `setup --vscode` scrive sia le impostazioni dell'editor
+sia `COPILOT_API_URL`. Diagramma e dettagli:
+[Configurare editor, CLI e harness](packages/client/README.md#configurare-editor-cli-e-harness).
 
-Sull'URL `http://127.0.0.1:8787` il token Copilot non lascia la macchina, quindi non serve
-TLS fra editor e client. Serve invece **fra client e collector**: li' passa il token di ingest.
-Usa `https://` in `COLLECTOR_URL` — il client si rifiuta di partire se punta in chiaro a un
-host che non sia localhost.
+**Misura.** Il proxy inoltra la richiesta cosi' com'e' e legge una copia dello stream di
+risposta. Riconosce tre formati senza configurazione: Anthropic Messages, OpenAI Chat
+Completions e OpenAI Responses. Per le Chat Completions in streaming aggiunge
+`stream_options: { include_usage: true }` **solo se il client non l'ha gia' specificato**:
+senza, l'upstream non restituirebbe contatori. Prompt e risposte non vengono mai salvati.
 
-Se invece esponi il client oltre localhost (postazione condivisa, macchina di sviluppo remota),
-allora il token Copilot attraversa la rete e TLS torna obbligatorio:
+**Attribuzione del progetto.** Prima i segnali espliciti, poi i path:
 
-```bash
-TLS_KEY_PATH=/etc/copilot-proxy/key.pem
-TLS_CERT_PATH=/etc/copilot-proxy/cert.pem
-```
+| Priorita' | Segnale | Sorgente |
+| --- | --- | --- |
+| 1 | prefisso `/p/<progetto>` nella base URL | `path` |
+| 2 | header `X-Project-Id` | `header` |
+| 3 | username di `Proxy-Authorization` | `proxy-auth` |
+| 4 | mappa `ATTRIBUTION_TOKENS` | `token` |
+| 5 | path dei repository locali citati nella richiesta | `workspace` |
+| 6 | ultimo progetto della stessa sessione, entro 30 minuti | `session` |
+| 7 | nessun segnale: `unassigned` | `fallback` |
 
-e usa `https://` in `overrideCapiUrl`. Se il certificato e' firmato da una CA interna, installala
-nel trust store del sistema: VS Code la usa gia' (`http.systemCertificates` e' attivo di default).
-Non disabilitare `http.proxyStrictSSL`.
+Il rilevamento dai path (5) e' il caso normale per VS Code e non richiede configurazione per
+repository: l'identita' del progetto e' il percorso del remote Git (`acme/web/portal`), non
+il nome della cartella. Funziona solo perche' il proxy gira **sulla stessa macchina** dei
+repository: un proxy condiviso vedrebbe path che non puo' risolvere.
 
-### Verifica del rollout
+**Attribuzione del developer.** Prefisso `/u/`, header `X-Developer-Id`, mappa
+`ATTRIBUTION_TOKENS`, oppure uno pseudonimo: hash con salt del campo stabile del token Copilot,
+identico su ogni postazione della stessa persona. Dettagli:
+[Attribuzione al progetto e al developer](packages/client/README.md#attribuzione-al-progetto-e-al-developer).
 
-```bash
-# 1. il client locale risponde e vede il collector
-curl http://127.0.0.1:8787/_health
+**Consegna.** Gli eventi vanno al collector in batch, ogni 5 secondi o a 100 eventi. Il
+formato e le risposte sono nel [contratto](packages/shared/README.md#il-protocollo).
 
-# 2. dopo qualche prompt in VS Code, il traffico deve comparire qui
-curl "https://copilot-collector.swarm.vidiemme.it/_usage/summary?groupBy=developer"
+## Rollout in Vidiemme
 
-# 3. nessun modello deve finire fra gli sconosciuti
-curl https://copilot-collector.swarm.vidiemme.it/_usage/unknown-models
-```
-
-Se il punto 1 risponde ma il punto 2 resta vuoto, guarda il file di spool indicato da
-`SPOOL_PATH`: se cresce, il client sta misurando ma non riesce a consegnare, e nei suoi log
-c'e' il motivo (`collector irraggiungibile`, `collector ha rifiutato gli eventi`).
-
-Il traffico VS Code arriva con `project_source` a `workspace` o `session` e `client_name`
-valorizzato con lo user agent dell'estensione: usa quest'ultimo per distinguerlo dai CLI
-agentici nelle query. Un `project_source = 'fallback'` diffuso significa che `WORKSPACE_ROOTS`
-non copre le cartelle di lavoro reali.
-
-### L'alternativa: TLS interception
-
-L'unico modo per attribuire il traffico VS Code a un progetto sarebbe un forward proxy con
-terminazione TLS su `*.githubcopilot.com` e CA aziendale sulle macchine. **Non e' implementato
-qui**, e prima di percorrerlo considera che in Italia ricade nell'art. 4 dello Statuto dei
-Lavoratori: va concordato con HR/legale e comunicato ai developer. Anche cosi', restando
-`http.proxy` di scope applicazione, non otterresti comunque il progetto.
-
-## Harness e proxy intermedi verso Copilot
-
-C'e' chi usa un harness (Claude Code, OpenCode, Cline, Aider, ...) che non parla con Copilot
-direttamente ma tramite un proprio proxy (`copilot-api`, LiteLLM o simili): e' quel proxy a
-ottenere il token Copilot, tradurre il formato e chiamare `api.githubcopilot.com`. Il consumo
-finisce comunque nella fattura Copilot, quindi va misurato.
-
-Il modo giusto e' mettere `copilot-proxy` **subito prima di Copilot**, cioe' come ultimo anello:
-
-```
-harness  ->  proxy intermedio  ->  copilot-proxy (127.0.0.1:8787)  ->  api.githubcopilot.com
-```
-
-In questa posizione `copilot-proxy` vede le richieste gia' in formato Copilot, con il token
-Copilot vero, esattamente come quelle di VS Code: lo pseudonimo del developer e' stabile, il
-modello registrato e' quello che Copilot fattura, e la stessa istanza continua a servire anche
-VS Code senza toccare `UPSTREAM_BASE_URL`.
-
-### Configurazione
-
-1. Installa e avvia `copilot-proxy` come al solito (`setup --autostart`).
-2. Nel proxy intermedio, imposta come URL base dell'API Copilot `http://127.0.0.1:8787`, al
-   posto di `https://api.githubcopilot.com`. Il nome dell'opzione dipende dallo strumento
-   (tipicamente `baseURL`, `api_base` o simili): cercala nella sua documentazione alla voce del
-   provider GitHub Copilot. L'URL va indicato senza path aggiuntivi: `copilot-proxy` inoltra il
-   path cosi' com'e'.
-3. Lascia che il proxy intermedio continui a gestire autenticazione e rinnovo del token:
-   `copilot-proxy` inoltra l'header `Authorization` senza modificarlo.
-4. Se il proxy intermedio usava un host Copilot specifico del piano (ad esempio
-   `api.business.githubcopilot.com`), metti quello in `UPSTREAM_BASE_URL` di `copilot-proxy`.
-
-Gli harness con un provider Copilot integrato e un URL configurabile (senza proxy intermedio)
-si configurano allo stesso modo: l'URL base del provider Copilot diventa
-`http://127.0.0.1:8787`.
-
-### Progetto e developer
-
-- Il progetto si ricava dai path citati nei messaggi, come per VS Code: funziona finche' il
-  proxy intermedio traduce il formato senza eliminare il contenuto dei messaggi.
-- Se un'istanza del proxy intermedio lavora sempre sullo stesso progetto, puoi dichiararlo
-  nell'URL: `http://127.0.0.1:8787/p/acme-portal`.
-- Il developer e' lo pseudonimo del token Copilot, quindi coincide con quello del traffico VS Code
-  della stessa persona: nessuna configurazione in piu'.
-
-### Verifica
+Il collector e' attivo su **`https://copilot-collector.swarm.vidiemme.it`**, ed e' gia' il
+default del pacchetto ([`src/defaults.ts`](packages/client/src/defaults.ts)) insieme al salt
+degli pseudonimi. A ogni postazione serve solo il token di ingest, da chiedere a chi
+amministra il servizio:
 
 ```bash
-copilot-proxy status    # "eventi misurati" deve crescere dopo qualche prompt nell'harness
+npm install -g @vidiemme/copilot-proxy@latest
+copilot-proxy setup --vscode --autostart     # chiede il token in modo nascosto
 ```
 
-Nel reporting il traffico dell'harness si distingue con `groupBy=client`: `client_name` e' lo
-user-agent del proxy intermedio. Le richieste senza contatori di token (elenco modelli, controlli
-di stato) attraversano `copilot-proxy` ma non producono eventi.
+Per un rollout non interattivo (MDM, script) il token si passa con `COLLECTOR_TOKEN`
+nell'ambiente; non esiste un'opzione `--token`, di proposito. Installazione, aggiornamento e
+diagnostica sono nel [README del client](packages/client/README.md#installazione-rapida).
 
-### Quando non si puo'
+Per verificare il rollout:
 
-Se il proxy intermedio non permette di cambiare l'URL di Copilot, l'alternativa e' mettere
-`copilot-proxy` **prima** di lui (`harness -> copilot-proxy -> proxy intermedio`), con
-`UPSTREAM_BASE_URL` puntato al proxy intermedio. Funziona, ma con limiti:
+```bash
+# 1. sulla postazione: proxy in ascolto, eventi misurati e consegnati
+copilot-proxy status
+copilot-proxy doctor
 
-- `UPSTREAM_BASE_URL` vale per tutto il traffico: VS Code va servito da una seconda istanza di
-  `copilot-proxy`, su un'altra porta (`--port`) e con un'altra cartella di configurazione
-  (`COPILOT_PROXY_HOME`), avviata con `start` perche' l'avvio automatico gestisce una sola
-  istanza;
-- l'harness manda una chiave fittizia, che non identifica nessuno: dichiara il developer
-  nell'URL, ad esempio `http://127.0.0.1:8788/u/mario.rossi`;
-- se il proxy intermedio rimappa i modelli, viene registrato il modello che compare nella
-  risposta, che potrebbe non essere quello fatturato: controlla `/_usage/unknown-models`.
+# 2. sul collector, dopo qualche prompt: il reporting chiede la basic auth dell'ingress
+curl -u <utente> "https://copilot-collector.swarm.vidiemme.it/_usage/summary?groupBy=developer"
 
-Se `copilot-proxy` non e' nella catena, quel consumo non viene misurato e si vede solo come
-differenza fra la fattura GitHub e il costo misurato.
-
-## Il contratto sul filo
-
-`packages/shared` e' pubblicato come `@vidiemme/copilot-usage-contract`: e' cio' che il client
-e il servizio di raccolta devono condividere, ed e' l'unica parte del sistema che li lega.
-
-```
-POST /v1/usage
-Authorization: Bearer <token di ingest>
-Content-Type: application/json
-
-{ "events": [ { "requestId": "...", "occurredAt": "2026-02-01T10:00:00.000Z",
-               "developerId": "...", "projectId": "...", "model": "gpt-5.4",
-               "usage": { "inputTokens": 0, "cachedInputTokens": 0,
-                          "cacheWriteTokens": 0, "outputTokens": 0 }, ... } ] }
+# 3. nessun modello deve restare fuori listino
+curl -u <utente> https://copilot-collector.swarm.vidiemme.it/_usage/unknown-models
 ```
 
-Risponde `202 { "accepted": n }`, `400` su payload non conforme, `401` senza token valido,
-`503` se il database non accetta la scrittura (il client ritenta). Gli eventi sono validati
-uno per uno: quelli malformati tornano in `rejected` con indice ed errore, senza far perdere
-gli altri del batch. Massimo 500 eventi per richiesta.
-
-Il client si presenta con lo user-agent `@vidiemme/copilot-proxy/<versione>`: il collector lo
-registra per evento, cosi' si vede quali postazioni vanno aggiornate.
-
-Il payload **non contiene il costo**: lo calcola il servizio di raccolta, con un listino che il
-client non conosce. Non contiene nemmeno prompt, completion o path locali: solo contatori e
-identificatori. Gli eventi sono deduplicati su `requestId`, quindi un rinvio dopo un errore di
-rete non raddoppia la spesa.
-
-Il confine di validazione e' il server, non il client: il client misura e consegna, il server
-decide cosa e' accettabile. Ogni modifica al contratto deve restare retrocompatibile con i
-proxy gia' installati sulle postazioni, che si aggiornano quando vogliono.
-
-Il costo, il reporting (`/_usage/summary`, `/_usage/projects`, `/_usage/developers`,
-`/_usage/unknown-models`), lo schema del database e la riconciliazione con la fattura GitHub
-sono documentati nel repository del servizio di raccolta.
+Se il punto 1 misura eventi ma il punto 2 resta vuoto, lo spool sulla postazione cresce e i
+log del proxy dicono il motivo (`collector irraggiungibile`, `collector ha rifiutato gli
+eventi`). Molto traffico con sorgente `fallback` significa che `WORKSPACE_ROOTS` non copre le
+cartelle di lavoro reali.
 
 ## Sviluppo
 
-Monorepo npm con due pacchetti: `shared` (il contratto sul filo) e `client` (il proxy).
+Monorepo npm con due pacchetti. Serve Node >= 22.19 (richiesto da Undici 8).
+
+```
+packages/
+  client/   @vidiemme/copilot-proxy           il proxy, CLI compreso
+    src/        proxy/, usage/ (parser), collector/ (forwarder e spool), attribuzione, setup
+    scripts/    smoke, verify-detection, verify-e2e
+    docs/diagrams/   sorgenti HTML e PNG dei diagrammi
+  shared/   @vidiemme/copilot-usage-contract  tipi e validazione del protocollo
+scripts/render-diagrams.sh                    rigenera i PNG dei diagrammi
+```
+
+```bash
+npm install
+cp packages/client/.env.example packages/client/.env    # punta il proxy a un collector locale
+npm run dev
+```
+
+Il `.env` serve **solo** allo sviluppo del proxy: le postazioni non ne hanno uno, e sotto
+`npx` non viene letto nessun `.env` dalla working directory. In sviluppo lo carica
+`node --env-file-if-exists`, non il codice, cosi' i due percorsi restano distinti.
+
+| Porta | Cosa |
+| --- | --- |
+| `8787` | il proxy (`copilot-proxy`), sulla postazione |
+| `8080` | il collector, quando lo avvii in locale dal suo repository |
+| `5433` | il Postgres usa e getta del collector, in locale |
 
 ```bash
 npm test                  # contratto, forwarder, parser usage, attribuzione, config, proxy end-to-end
+npm run typecheck
+npm run build
 npm run smoke             # proxy reale contro un upstream finto, senza collector
 npm run verify-detection  # rilevamento del progetto, con un collector finto
 npm run verify-e2e        # client -> collector -> Postgres (richiede il collector avviato)
-npm run typecheck
-npm run build
 ```
+
+`smoke` e `verify-detection` girano ovunque; `verify-e2e` attraversa tutto lo stack e richiede
+il collector in esecuzione. `UPSTREAM_BASE_URL` puo' puntare a `https://api.githubcopilot.com`
+oppure a un traduttore gia' in uso (es. `copilot-api` su `http://127.0.0.1:4141`).
+
+Ogni modifica al contratto deve restare retrocompatibile con i proxy gia' installati, che si
+aggiornano quando vogliono: le regole sono in
+[Versionamento e compatibilita'](packages/shared/README.md#versionamento-e-compatibilita).
+
+## Release
+
+![Rilascio: npm version, tag, publish.yml verifica e pubblica prima il contratto se nuovo, poi il proxy, con OIDC.](packages/client/docs/diagrams/release.png)
+
+[Sorgente HTML del diagramma](packages/client/docs/diagrams/release.html)
+
+```bash
+npm version X.Y.Z -w @vidiemme/copilot-proxy   # e il contratto, solo se e' cambiato
+git tag vX.Y.Z && git push --tags
+```
+
+[`publish.yml`](.github/workflows/publish.yml) esegue typecheck, test e build, verifica che il
+tag corrisponda alla versione del proxy, pubblica il contratto se la sua versione non e' gia'
+sul registry e poi il proxy. [`ci.yml`](.github/workflows/ci.yml) esegue le stesse verifiche,
+piu' `smoke` e `verify-detection`, a ogni push su `main` e su ogni pull request.
+
+Il contratto va per primo perche' il client ne importa a runtime `MAX_EVENTS_PER_BATCH` e
+`totalInputTokens`. Ha un ciclo di versioni suo, non legato al tag. Entrambi i pacchetti hanno
+`publishConfig.access: public`, altrimenti npm tratterebbe lo scope come privato.
+
+L'autenticazione usa **trusted publishing**: GitHub Actions si autentica su npm via OIDC, con
+credenziali usa e getta, senza token npm da custodire. Va configurato su npmjs.com per
+**entrambi** i pacchetti, indicando organizzazione, repository e `publish.yml`. Il campo
+`repository` di `package.json` deve combaciare con il repository GitHub. OIDC funziona con
+GitHub Actions, GitLab.com e CircleCI, non con GitLab self-hosted.
+
+**Primo rilascio in assoluto.** Il trusted publisher si configura dalle impostazioni di un
+pacchetto, che non esistono finche' il pacchetto non e' sul registry:
+
+1. su npmjs.com crea un **granular access token** in scrittura sullo scope `@vidiemme`, con
+   scadenza breve;
+2. mettilo nel secret `NPM_TOKEN` del repository GitHub;
+3. spingi il tag: la CI pubblica entrambi i pacchetti con il token;
+4. configura il trusted publishing sui due pacchetti appena creati;
+5. **cancella il secret e revoca il token**. Da qui in avanti la CI usa OIDC.
+
+In locale, se serve pubblicare a mano: `npm run release` (typecheck, test, contratto se la
+versione e' nuova, poi proxy).
+
+## Diagrammi
+
+I diagrammi stanno in [`packages/client/docs/diagrams/`](packages/client/docs/diagrams/):
+l'HTML e' il sorgente, il PNG la resa a 2x che README e npm mostrano. Sono creati con
+`diagram-design`, profilo `bip-red` ([`.diagram-design`](.diagram-design)).
+
+| Diagramma | Mostra | Usato in |
+| --- | --- | --- |
+| `system` | le due parti e quali dati passano su ogni freccia | questo README |
+| `release` | il flusso di pubblicazione su npm | questo README |
+| `architecture` | proxy locale, upstream, spool e collector | client |
+| `lifecycle` | ciclo di una richiesta, dall'editor al collector | client |
+| `routing` | come ogni famiglia di client arriva al proxy | client |
+| `attribution` | precedenza dell'attribuzione del progetto | client |
+| `identity` | identita' del developer e pseudonimo | client |
+| `harness` | disposizione con un proxy intermedio, e ripiego | client |
+| `delivery` | coda, spool, ritentativi e perdite | client |
+
+Dopo aver modificato un HTML:
+
+```bash
+scripts/render-diagrams.sh packages/client/docs/diagrams/*.html
+```
+
+Lo script usa Chrome in modalita' headless (`CHROME=/percorso/del/binario` per sceglierne un
+altro). Il README del client punta ai PNG su `raw.githubusercontent.com`, perche' npm non
+risolve i path relativi: un diagramma aggiornato compare li' dopo il push su `main`.

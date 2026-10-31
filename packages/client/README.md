@@ -45,7 +45,7 @@ il pacchetto contiene i default aziendali Vidiemme, ma puo' usare un altro endpo
 | JetBrains / Android Studio, Eclipse, Xcode, Visual Studio | Non supportati: nessuna intercettazione TLS / `CONNECT` implementata. |
 | macOS | Avvio automatico tramite LaunchAgent `launchd` dell'utente. |
 | Linux | Avvio automatico tramite servizio utente `systemd`. |
-| Windows | Percorsi e impostazioni editor previsti; `--autostart` non implementato. Rilevamento dei path coperto dai test, da verificare su una postazione reale. |
+| Windows | Percorsi, impostazioni editor e `COPILOT_API_URL` gestiti. `--autostart` non registra un servizio: stampa il comando da aggiungere a Esecuzione automatica. Rilevamento dei path coperto dai test, da verificare su una postazione reale. |
 
 > Le impostazioni di override di Copilot sono opzioni di **debug non supportate**:
 > possono cambiare con gli aggiornamenti dell'estensione. Verifica periodicamente
@@ -93,7 +93,8 @@ npx @vidiemme/copilot-proxy@latest start
 
 `start` resta in primo piano: lascia il terminale aperto e usa `Ctrl+C` per fermarlo.
 Con questa modalita' il proxy va avviato prima di usare gli editor configurati.
-Su Windows usa questa modalita' o configura autonomamente l'avvio del processo.
+Su Windows usa questa modalita', oppure aggiungi a Esecuzione automatica il comando
+che `setup --autostart` stampa.
 
 ### Un collector diverso da quello aziendale
 
@@ -130,6 +131,17 @@ Il token Copilot e la conversazione vanno all'upstream, **non al collector**.
 Il proxy non effettua login o rinnovo delle credenziali Copilot: se ne occupa
 il client o il proxy intermedio gia' utilizzato.
 
+### Ciclo di vita di una richiesta
+
+![Sequenza: il proxy attribuisce la richiesta, rileva il progetto dai path solo se serve, inoltra a Copilot, duplica lo stream verso il parser e accoda un evento che il forwarder consegna in batch.](https://raw.githubusercontent.com/vidiemme/copilot-usage/main/packages/client/docs/diagrams/lifecycle.png)
+
+[Sorgente HTML del diagramma](https://github.com/vidiemme/copilot-usage/blob/main/packages/client/docs/diagrams/lifecycle.html)
+
+La risposta arriva al client **mentre** passa: il parser legge una copia dello stream e non
+lo rallenta. L'evento nasce solo a fine stream, e solo se la risposta conteneva contatori.
+Il formato dell'evento e le risposte del collector sono specificati nel
+[contratto](https://github.com/vidiemme/copilot-usage/tree/main/packages/shared#readme).
+
 ### Protocolli e contatori
 
 | Formato di risposta | Origine dei contatori |
@@ -155,7 +167,10 @@ puo' essere parziale.
 
 [Sorgente HTML del diagramma](https://github.com/vidiemme/copilot-usage/blob/main/packages/client/docs/diagrams/attribution.html)
 
-Il progetto viene risolto con questa precedenza:
+### Progetto
+
+Il progetto viene risolto con questa precedenza. I segnali 1-4 sono espliciti e vincono
+sempre; il rilevamento dai path parte solo se nessuno di loro e' presente.
 
 | Priorita' | Segnale | `projectSource` |
 | --- | --- | --- |
@@ -189,14 +204,41 @@ In loro assenza la chiave e' il developer: in quel caso progetti paralleli
 possono condividere il fallback. Il rilevamento ispeziona al massimo i primi
 4 MiB del corpo della richiesta.
 
-Il developer viene risolto da `/u/<developer>`, `X-Developer-Id`, credenziali
-mappate oppure da un hash SHA-256 con salt, troncato a 16 caratteri esadecimali,
-dell'identita' stabile estratta dal token upstream (o del token intero per altri
-formati). Senza un segnale utilizzabile risulta `unknown`.
-Il salt deve rimanere uguale sulle postazioni per mantenere coerenti gli pseudonimi;
-cambiarlo interrompe la continuita' degli ID.
+### Developer
+
+![Identita' del developer: prefisso /u/, header X-Developer-Id, mappa ATTRIBUTION_TOKENS, pseudonimo dal token Copilot, unknown.](https://raw.githubusercontent.com/vidiemme/copilot-usage/main/packages/client/docs/diagrams/identity.png)
+
+[Sorgente HTML del diagramma](https://github.com/vidiemme/copilot-usage/blob/main/packages/client/docs/diagrams/identity.html)
+
+| Priorita' | Segnale | `developerSource` |
+| --- | --- | --- |
+| 1 | Prefisso URL `/u/<developer>` | `path` |
+| 2 | Header `X-Developer-Id` | `header` |
+| 3 | Mappa statica `ATTRIBUTION_TOKENS` | `token` |
+| 4 | Pseudonimo del token upstream | `pseudonym` |
+| 5 | Nessun segnale: `unknown` | `fallback` |
+
+Lo pseudonimo e' un hash SHA-256 con salt, troncato a 16 caratteri esadecimali, del
+**campo stabile** del token Copilot: il primo presente fra `u`, `tid`, `oid` e `sid`. Il
+token ruota ogni pochi minuti e l'hash dell'intero token creerebbe una persona nuova a ogni
+rotazione. Un token che non e' nel formato `chiave=valore;...` viene usato per intero.
+
+Il salt e' una costante del pacchetto e deve restare uguale su tutte le postazioni: e' cio'
+che rende confrontabile la stessa persona fra macchine. Cambiarlo interrompe la continuita'
+degli ID.
+
+Nome ed email confermati al setup non entrano nell'evento: viaggiano negli header
+`X-Developer-Name` e `X-Developer-Email` di ogni batch, e il collector non li usa se un
+amministratore ha gia' assegnato un nome dalla dashboard.
 
 ## Configurare editor, CLI e harness
+
+![Instradamento: Copilot Chat con overrideCapiUrl, Copilot CLI con COPILOT_API_URL, CLI con base URL, harness tramite il proxy intermedio; i client JetBrains, Eclipse, Xcode e Visual Studio vanno diretti e non sono misurati.](https://raw.githubusercontent.com/vidiemme/copilot-usage/main/packages/client/docs/diagrams/routing.png)
+
+[Sorgente HTML del diagramma](https://github.com/vidiemme/copilot-usage/blob/main/packages/client/docs/diagrams/routing.html)
+
+Ogni famiglia di client ha un meccanismo diverso per cambiare l'URL di Copilot, e ignora
+quello degli altri. `setup --vscode` copre le prime due righe; le altre si configurano a mano.
 
 ### VS Code e derivati
 
@@ -259,18 +301,38 @@ un client Anthropic richiede un upstream che esponga Messages, o un traduttore.
 
 ### Harness con proxy intermedio
 
-Se usi Claude Code, Codex o altri harness tramite un traduttore/provider Copilot,
-la disposizione consigliata e':
+Se usi Claude Code, Codex o altri harness tramite un traduttore/provider Copilot
+(`copilot-api`, LiteLLM, ...), metti `copilot-proxy` **per ultimo**, subito prima di Copilot:
 
-```text
-harness -> proxy intermedio -> copilot-proxy -> api.githubcopilot.com
-```
+![Disposizione consigliata con un'unica istanza come ultimo anello, e ripiego con una seconda istanza prima del proxy intermedio.](https://raw.githubusercontent.com/vidiemme/copilot-usage/main/packages/client/docs/diagrams/harness.png)
 
-Nel proxy intermedio cambia l'URL del provider Copilot in `http://127.0.0.1:8787`.
-Lascia `UPSTREAM_BASE_URL` del proxy di misura al suo default Copilot.
-Il proxy intermedio continua a gestire login, rinnovo token e traduzione;
-deve conservare path di contesto o segnali espliciti per attribuire il progetto.
-Questa disposizione permette alla stessa istanza di misurare anche VS Code.
+[Sorgente HTML del diagramma](https://github.com/vidiemme/copilot-usage/blob/main/packages/client/docs/diagrams/harness.html)
+
+1. Nel proxy intermedio cambia l'URL del provider Copilot in `http://127.0.0.1:8787`,
+   senza path aggiuntivi. Il nome dell'opzione dipende dallo strumento (`baseURL`,
+   `api_base`, ...).
+2. Lascia `UPSTREAM_BASE_URL` del proxy di misura al suo default Copilot. Se il proxy
+   intermedio usava un host del piano (per esempio `api.business.githubcopilot.com`),
+   metti quello in `UPSTREAM_BASE_URL`.
+3. Il proxy intermedio continua a gestire login, rinnovo token e traduzione;
+   `copilot-proxy` inoltra `Authorization` senza toccarlo.
+
+In questa posizione il proxy vede richieste gia' in formato Copilot con il token vero: lo
+pseudonimo coincide con quello del traffico VS Code della stessa persona e il modello
+registrato e' quello fatturato. Il progetto si ricava dai path citati nei messaggi, finche'
+il proxy intermedio ne conserva il contenuto; altrimenti dichiaralo con
+`http://127.0.0.1:8787/p/<progetto>`. Nel reporting il traffico si distingue per
+`clientName`, che e' lo user-agent del proxy intermedio.
+
+**Ripiego**, se il proxy intermedio non permette di cambiare l'URL di Copilot: una seconda
+istanza di `copilot-proxy` prima di lui, con `UPSTREAM_BASE_URL` puntato al proxy
+intermedio, una porta (`--port`) e una cartella (`COPILOT_PROXY_HOME`) proprie, avviata con
+`start` perche' l'avvio automatico gestisce una sola istanza. L'harness manda una chiave
+fittizia, quindi il developer va dichiarato nell'URL (`http://127.0.0.1:8788/u/mario.rossi`);
+se il proxy intermedio rimappa i modelli, controlla `/_usage/unknown-models` sul collector.
+
+Se `copilot-proxy` non e' nella catena, quel consumo non viene misurato e si vede solo come
+differenza fra la fattura GitHub e il costo misurato.
 
 `copilot-proxy` e' un **reverse proxy HTTP**, non un forward proxy generico:
 impostare soltanto `HTTP_PROXY` / `HTTPS_PROXY` non garantisce il funzionamento.
@@ -375,6 +437,10 @@ dichiarare progetto e developer. E' uno strumento di contabilita' analitica
 interna, non un sistema di attribuzione non ripudiabile o una fattura ufficiale.
 
 ### Collector non disponibile
+
+![Consegna: coda in memoria, invio in batch, spool su disco per errori di rete, 5xx, 401, 403, 408 e 429; scarto per gli altri 4xx e per coda piena.](https://raw.githubusercontent.com/vidiemme/copilot-usage/main/packages/client/docs/diagrams/delivery.png)
+
+[Sorgente HTML del diagramma](https://github.com/vidiemme/copilot-usage/blob/main/packages/client/docs/diagrams/delivery.html)
 
 La disponibilita' del collector non blocca le richieste Copilot. Errori di rete,
 timeout, errori server e HTTP `401`, `403`, `408`, `429` fanno conservare gli eventi
@@ -489,7 +555,7 @@ il proxy lasciando gli editor configurati: Copilot non raggiungerebbe l'upstream
 
 - [Codice sorgente e documentazione del progetto](https://github.com/vidiemme/copilot-usage)
 - [Segnalazioni e richieste](https://github.com/vidiemme/copilot-usage/issues)
-- [Contratto degli eventi](https://github.com/vidiemme/copilot-usage/tree/main/packages/shared)
+- [Contratto degli eventi: protocollo, campi e risposte](https://github.com/vidiemme/copilot-usage/tree/main/packages/shared#readme)
 - [Licenza MIT](https://github.com/vidiemme/copilot-usage/blob/main/packages/client/LICENSE)
 
 I diagrammi sono creati con `diagram-design`, con palette ispirata a
