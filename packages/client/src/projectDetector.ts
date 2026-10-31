@@ -30,8 +30,12 @@ const IS_WINDOWS = sep === '\\';
 const SEPARATOR = '[\\\\/]+';
 /** Caratteri ammessi in un segmento di path, esclusi i separatori. */
 const SEGMENT_CHAR = '[^\\s"\'`,;:*?<>|()\\[\\]{}\\\\/]';
-/** Un segmento puo' contenere spazi singoli: `My Project`. */
-const SEGMENT = `${SEGMENT_CHAR}+(?: ${SEGMENT_CHAR}+)*`;
+/**
+ * Un segmento puo' contenere spazi singoli: `My Project`. Dopo lo spazio non
+ * puo' esserci una lettera di unita': in `a.ts C:\b.ts` il secondo path non va
+ * inghiottito dal primo.
+ */
+const SEGMENT = `${SEGMENT_CHAR}+(?: (?![A-Za-z]:)${SEGMENT_CHAR}+)*`;
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
