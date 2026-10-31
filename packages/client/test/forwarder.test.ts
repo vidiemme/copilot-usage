@@ -188,6 +188,19 @@ describe('UsageForwarder', () => {
     expect(forwarder.stats().lastEventAt).not.toBeNull();
   });
 
+  it("ricorda l'ultimo evento per famiglia di client", () => {
+    const forwarder = makeForwarder();
+    forwarder.enqueue({ ...makeEvent('a'), clientName: 'GitHubCopilotChat/0.72.0' });
+    forwarder.enqueue({ ...makeEvent('b'), clientName: 'copilot/1.0.103 (darwin v24.20.0) client/github/cli' });
+    forwarder.enqueue({ ...makeEvent('c'), clientName: null });
+
+    expect(Object.keys(forwarder.stats().lastEventByClient).sort()).toEqual([
+      'GitHubCopilotChat',
+      'copilot',
+      'sconosciuto',
+    ]);
+  });
+
   it('recupera un invio interrotto da un arresto brusco', async () => {
     writeFileSync(join(dir, 'spool.jsonl.sending'), `${JSON.stringify(makeEvent('orfano'))}\n`);
 

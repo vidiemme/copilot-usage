@@ -217,6 +217,25 @@ Il setup salva un backup con suffisso `.bak` prima di modificare un file esisten
 Se il file contiene commenti, virgole finali o non e' JSON valido, non lo riscrive
 e stampa lo snippet da inserire manualmente. Poi riavvia l'editor.
 
+### Copilot CLI e sessioni agentiche in VS Code
+
+Copilot CLI e le sessioni "Copilot CLI" dentro VS Code girano nel runtime
+agentico di Copilot (`copilot-runtime`), un processo separato che **ignora**
+`overrideCapiUrl` e parla direttamente con GitHub. Si indirizza al proxy con la
+variabile d'ambiente `COPILOT_API_URL`, che il runtime eredita dall'editor.
+
+`setup --vscode` la imposta a livello di sessione utente, in modo persistente:
+
+| Sistema | Dove |
+| --- | --- |
+| macOS | `launchctl setenv` + LaunchAgent `~/Library/LaunchAgents/com.vidiemme.copilot-proxy.env.plist` |
+| Linux | `~/.config/environment.d/copilot-proxy.conf` |
+| Windows | variabile utente (`setx`) |
+
+Vale per le applicazioni avviate dopo il setup: **chiudi e riapri VS Code** (non
+basta ricaricare la finestra) e i terminali. `doctor` verifica che sia impostata.
+`uninstall` la rimuove, altrimenti senza proxy il runtime non raggiungerebbe Copilot.
+
 ### CLI: attribuzione esplicita
 
 Per un client compatibile con l'upstream e con base URL configurabile:
@@ -265,10 +284,10 @@ con `npx @vidiemme/copilot-proxy@latest`.
 | --- | --- |
 | `setup` | Crea la configurazione della postazione. |
 | `start` | Avvia il proxy in primo piano (comando predefinito se non ne indichi uno). |
-| `status` | Mostra versione installata e in esecuzione, contatori e spool. |
-| `doctor` | Controlla configurazione, cartelle, collector, editor, spool e processo. |
+| `status` | Mostra versione installata e in esecuzione, instradamento di editor e Copilot CLI, contatori per client e spool. |
+| `doctor` | Controlla configurazione, cartelle, collector, editor (anche override commentati), `COPILOT_API_URL` e runtime da riavviare, spool e processo. |
 | `restart` | Riavvia il servizio automatico gia' registrato. |
-| `uninstall` | Rimuove l'avvio automatico; lascia configurazione e impostazioni editor. |
+| `uninstall` | Rimuove l'avvio automatico e `COPILOT_API_URL`; lascia configurazione e impostazioni editor. |
 | `--version` | Mostra la versione del CLI. |
 | `--help` | Mostra comandi e opzioni. |
 
@@ -276,7 +295,7 @@ con `npx @vidiemme/copilot-proxy@latest`.
 
 | Opzione | Uso |
 | --- | --- |
-| `--vscode` | Configura VS Code e derivati installati. |
+| `--vscode` | Configura VS Code e derivati installati, e `COPILOT_API_URL` per Copilot CLI e sessioni agentiche. |
 | `--autostart` | Registra e avvia il servizio utente su macOS/Linux. |
 | `--port <n>` | Porta locale, default `8787`. |
 | `--workspace-roots <a,b>` | Directory assolute in cui risolvere i progetti. |
@@ -385,20 +404,27 @@ curl http://127.0.0.1:8787/_health
 ```
 
 `/_health` restituisce versione, avvio, URL upstream/collector, stato del rilevamento,
-statistiche `usage` e `spoolBytes`. I contatori sono **del processo corrente**,
+statistiche `usage` (con `lastEventByClient`, l'ultimo evento per tipo di client) e
+`spoolBytes`. I contatori sono **del processo corrente**,
 non uno storico completo; `ok: true` non dimostra che il collector sia raggiungibile.
+
+`status` mostra anche l'instradamento: per ogni editor se passa dal proxy (o se
+l'override e' commentato), se `COPILOT_API_URL` e' impostata, e l'ultimo evento
+dell'estensione Copilot Chat e di Copilot CLI / runtime agentico.
 
 `doctor` esce con codice non zero in presenza di `FAIL`. Un `WARN` da solo non
 fa fallire il comando: versione del processo diversa dal CLI, editor non tutti
-configurati o assenza prolungata di traffico richiedono comunque attenzione.
+configurati, `COPILOT_API_URL` mancante, runtime agentici avviati prima del setup
+o assenza prolungata di traffico richiedono comunque attenzione.
 Il controllo degli editor resta attivo anche se usi esclusivamente CLI:
 in quel caso un `FAIL` sugli editor non dimostra un errore dell'inoltro CLI.
 
 | Sintomo | Verifica / azione |
 | --- | --- |
-| Copilot non risponde dopo il setup | Verifica che il proxy sia avviato; se devi tornare al collegamento diretto rimuovi le due chiavi di override e riavvia l'editor. |
+| Copilot non risponde dopo il setup | Verifica che il proxy sia avviato; se devi tornare al collegamento diretto esegui `uninstall` (toglie anche `COPILOT_API_URL`), rimuovi le due chiavi di override e riavvia l'editor. |
 | Porta occupata | Ripeti il setup con `--force --port 9000 --vscode` e, se usato, `--autostart`. |
-| Nessun evento misurato | Riavvia l'editor, controlla gli override e il protocollo di usage; le risposte senza contatori non sono misurabili. |
+| Nessun evento misurato | Riavvia l'editor, controlla gli override (non devono essere commentati) e il protocollo di usage; le risposte senza contatori non sono misurabili. |
+| Solo eventi `gpt-4o-mini` a costo zero | Le chat girano nelle sessioni Copilot CLI / agentiche, che ignorano l'override dell'editor: esegui `setup --vscode --force`, poi chiudi e riapri l'editor. `doctor` segnala i runtime avviati senza `COPILOT_API_URL`. |
 | Progetti `unassigned` | Controlla `WORKSPACE_ROOTS`, path visibili sulla macchina del proxy e marker; per i CLI usa un prefisso o un header esplicito. |
 | Spool in crescita / collector `unreachable` | Controlla rete, URL del collector e log. |
 | Collector `401` / `403` | Token ruotato: vedi [Cambiare il token](#cambiare-il-token). Gli eventi restano in attesa entro i limiti dello spool. |
@@ -426,6 +452,10 @@ o cambia il percorso di Node, registra nuovamente il servizio:
 ```bash
 copilot-proxy setup --force --vscode --autostart
 ```
+
+Dalla versione che introduce `COPILOT_API_URL`, le postazioni gia' configurate
+vanno aggiornate con lo stesso comando (l'aggiornamento del pacchetto da solo non
+la imposta), poi chiudendo e riaprendo l'editor. `doctor` segnala se manca.
 
 ### Cambiare il token
 

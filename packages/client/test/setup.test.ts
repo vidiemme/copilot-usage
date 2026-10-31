@@ -4,7 +4,15 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { applyEditorSettings, knownEditors, pointsToProxy, readOverride, type Editor } from '../src/editors.js';
+import { apiUrlFromPsLine, isRuntimeCommand } from '../src/agentRuntime.js';
+import {
+  applyEditorSettings,
+  isOverrideCommented,
+  knownEditors,
+  pointsToProxy,
+  readOverride,
+  type Editor,
+} from '../src/editors.js';
 import { portStatus } from '../src/setupHelpers.js';
 
 let dir: string;
@@ -64,6 +72,49 @@ describe('impostazioni degli editor', () => {
     expect(pointsToProxy('http://localhost:9000/', 9000)).toBe(true);
     expect(pointsToProxy('http://127.0.0.1:9000', 9000)).toBe(true);
     expect(pointsToProxy('http://127.0.0.1:8787', 9000)).toBe(false);
+  });
+
+  it("non considera attivo un override commentato, ma lo segnala", () => {
+    const target = editor();
+    applyEditorSettings(target, 9000);
+    writeFileSync(
+      target.settingsFile,
+      '{\n  "editor.fontSize": 14\n  //"github.copilot.advanced.debug.overrideCapiUrl": "http://127.0.0.1:9000",\n}\n',
+    );
+
+    expect(readOverride(target)).toBeNull();
+    expect(isOverrideCommented(target)).toBe(true);
+  });
+
+  it('legge un override attivo anche su una riga che inizia con la graffa', () => {
+    const target = editor();
+    applyEditorSettings(target, 9000);
+    writeFileSync(target.settingsFile, '{"github.copilot.advanced.debug.overrideCapiUrl": "http://127.0.0.1:9000"}');
+
+    expect(readOverride(target)).toBe('http://127.0.0.1:9000');
+    expect(isOverrideCommented(target)).toBe(false);
+  });
+});
+
+describe('runtime agentico', () => {
+  it('riconosce il runtime di VS Code e il binario di Copilot CLI', () => {
+    expect(
+      isRuntimeCommand(
+        '/Applications/Visual Studio Code.app/Contents/Resources/app/node_modules.asar.unpacked/@github/copilot-sdk-darwin-arm64/prebuilds/darwin-arm64/copilot-runtime --headless --stdio',
+      ),
+    ).toBe(true);
+    expect(
+      isRuntimeCommand('/usr/lib/node_modules/@github/copilot/node_modules/@github/copilot-linux-x64/copilot -p ciao'),
+    ).toBe(true);
+    expect(isRuntimeCommand('node /usr/bin/copilot-proxy start')).toBe(false);
+    expect(isRuntimeCommand('node /home/me/.nvm/bin/copilot --help')).toBe(false);
+  });
+
+  it("estrae COPILOT_API_URL dall'ambiente stampato da ps", () => {
+    expect(apiUrlFromPsLine('/x/copilot-runtime --headless HOME=/Users/me COPILOT_API_URL=http://127.0.0.1:8787 PATH=/bin')).toBe(
+      'http://127.0.0.1:8787',
+    );
+    expect(apiUrlFromPsLine('/x/copilot-runtime --headless HOME=/Users/me MY_COPILOT_API_URL=x')).toBeUndefined();
   });
 });
 

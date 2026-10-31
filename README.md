@@ -188,6 +188,11 @@ Insiders, VSCodium, Cursor, Windsurf, Antigravity — dopo aver salvato un `.bak
 `settings.json` contiene commenti — legittimo, e' JSONC — il comando non lo tocca e stampa
 lo snippet da incollare a mano.
 
+Le impostazioni dell'editor non bastano per Copilot CLI e per le sessioni "Copilot CLI"
+dentro VS Code: girano in un runtime separato che le ignora e va diretto a GitHub. Per
+questo `--vscode` imposta anche `COPILOT_API_URL=http://127.0.0.1:<porta>` nell'ambiente
+utente (persistente, vedi il README del client); serve chiudere e riaprire VS Code.
+
 JetBrains (IntelliJ, WebStorm, PhpStorm, Android Studio), Eclipse, Xcode e Visual Studio
 usano il Copilot Language Server, che non ha un URL di override: accetta solo un forward
 proxy HTTP, e misurare quel traffico richiederebbe di decifrare il TLS con una CA locale. Non
@@ -195,12 +200,18 @@ e' implementato (vedi *L'alternativa: TLS interception* piu' sotto): il loro con
 viene misurato.
 
 `doctor` verifica configurazione, cartelle di lavoro, raggiungibilita' e validita'
-del token verso il servizio di raccolta, quali editor passano dal proxy, eventi rimasti
-nello spool e proxy in ascolto. Esce con codice diverso da zero se qualcosa non va.
+del token verso il servizio di raccolta, quali editor passano dal proxy (un override
+commentato con `//` conta come assente e viene indicato come tale), `COPILOT_API_URL`
+per Copilot CLI e sessioni agentiche, eventi rimasti nello spool e proxy in ascolto.
+Esce con codice diverso da zero se qualcosa non va.
 Segnala come `WARN`, senza fallire, un proxy in esecuzione di versione diversa da
-quella installata e l'assenza di traffico misurato da oltre 24 ore: e' il sintomo
-tipico di un aggiornamento dell'estensione Copilot che ignora le impostazioni di
-debug. Gli stessi contatori sono su `http://127.0.0.1:8787/_health`.
+quella installata, processi del runtime agentico avviati prima che `COPILOT_API_URL`
+fosse impostata (va chiuso e riaperto l'editor) e l'assenza di traffico misurato da
+oltre 24 ore: e' il sintomo tipico di un aggiornamento dell'estensione Copilot che
+ignora le impostazioni di debug. `status` mostra lo stesso instradamento e l'ultimo
+evento per tipo di client (estensione Copilot Chat, Copilot CLI / runtime agentico):
+se ne compare uno solo, l'altro probabilmente scavalca il proxy. Gli stessi contatori
+sono su `http://127.0.0.1:8787/_health`.
 
 Due vincoli che il client verifica all'avvio, e per cui si rifiuta di partire:
 

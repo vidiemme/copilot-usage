@@ -30,6 +30,18 @@ export interface ForwarderStats {
   lastDeliveryAt: string | null;
   /** Ultimo stato HTTP di errore del collector, o `unreachable`. */
   lastError: string | null;
+  /**
+   * Ultimo evento per famiglia di client (`GitHubCopilotChat`, `copilot`, ...).
+   * Distingue l'estensione dal runtime agentico: se ne arriva uno solo, l'altro
+   * probabilmente scavalca il proxy.
+   */
+  lastEventByClient: Record<string, string>;
+}
+
+/** Nome del client senza versione: `GitHubCopilotChat/0.72.0` -> `GitHubCopilotChat`. */
+export function clientFamily(clientName: string | null | undefined): string {
+  const name = clientName?.trim().split(/[/\s]/, 1)[0];
+  return name || 'sconosciuto';
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -61,6 +73,7 @@ export class UsageForwarder {
     lastEventAt: null,
     lastDeliveryAt: null,
     lastError: null,
+    lastEventByClient: {},
   };
   private readonly batchSize: number;
   private readonly spoolPath: string;
@@ -98,6 +111,7 @@ export class UsageForwarder {
   enqueue(event: UsageEventPayload): void {
     this.counters.recorded += 1;
     this.counters.lastEventAt = new Date().toISOString();
+    this.counters.lastEventByClient[clientFamily(event.clientName)] = this.counters.lastEventAt;
     if (this.queue.length >= MAX_QUEUE_LENGTH) {
       this.dropped += 1;
       this.counters.dropped += 1;
@@ -146,7 +160,7 @@ export class UsageForwarder {
   }
 
   stats(): ForwarderStats {
-    return { ...this.counters };
+    return { ...this.counters, lastEventByClient: { ...this.counters.lastEventByClient } };
   }
 
   private async send(events: UsageEventPayload[]): Promise<boolean> {

@@ -73,16 +73,31 @@ export function applyEditorSettings(editor: Editor, port: number): ApplyResult {
   return { status: 'updated', backup };
 }
 
-/** Valore di override letto dal file, senza `JSON.parse`: il file puo' contenere commenti. */
-export function readOverride(editor: Editor): string | null | undefined {
-  let raw: string;
+const OVERRIDE_PATTERN = OVERRIDE_KEY.replace(/\./g, '\\.');
+
+function readSettings(editor: Editor): string | undefined {
   try {
-    raw = readFileSync(editor.settingsFile, 'utf-8');
+    return readFileSync(editor.settingsFile, 'utf-8');
   } catch {
     return undefined;
   }
-  const match = new RegExp(`"${OVERRIDE_KEY.replace(/\./g, '\\.')}"\\s*:\\s*"([^"]*)"`).exec(raw);
+}
+
+/**
+ * Valore di override letto dal file, senza `JSON.parse`: il file puo' contenere
+ * commenti. Una riga commentata non conta: per l'editor l'override non c'e'.
+ */
+export function readOverride(editor: Editor): string | null | undefined {
+  const raw = readSettings(editor);
+  if (raw === undefined) return undefined;
+  const match = new RegExp(`^[ \\t{,]*"${OVERRIDE_PATTERN}"\\s*:\\s*"([^"]*)"`, 'm').exec(raw);
   return match ? (match[1] ?? '') : null;
+}
+
+/** L'override c'e' ma e' disattivato con `//`: tipico quando si esclude il proxy "per un attimo". */
+export function isOverrideCommented(editor: Editor): boolean {
+  const raw = readSettings(editor);
+  return raw !== undefined && new RegExp(`^\\s*//.*"${OVERRIDE_PATTERN}"`, 'm').test(raw);
 }
 
 export function pointsToProxy(value: string, port: number): boolean {

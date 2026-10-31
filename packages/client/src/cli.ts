@@ -2,12 +2,21 @@
 import { mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
+import {
+  API_URL_VAR,
+  installRuntimeRouting,
+  proxyUrl,
+  readRuntimeRouting,
+  runningRuntimes,
+  uninstallRuntimeRouting,
+} from './agentRuntime.js';
 import { installAutostart, isAutostartInstalled, restartAutostart, uninstallAutostart } from './autostart.js';
 import { loadConfig, type ClientConfig, type ConfigSource } from './config.js';
 import {
   applyEditorSettings,
   editorSnippet,
   installedEditors,
+  isOverrideCommented,
   knownEditors,
   pointsToProxy,
   readOverride,
@@ -34,7 +43,9 @@ al progetto su cui si sta lavorando.
 
 Opzioni di setup:
   --vscode                  scrive le impostazioni di VS Code e derivati (Insiders,
-                            VSCodium, Cursor, Windsurf, Antigravity) installati
+                            VSCodium, Cursor, Windsurf, Antigravity) installati, e
+                            imposta COPILOT_API_URL per Copilot CLI e le sessioni
+                            agentiche (Copilot CLI / SDK) dentro l'editor
   --autostart               avvia il proxy a ogni accesso, senza doverlo lanciare
   --port <n>                porta locale del proxy (default 8787; chiesta se interattivo)
   --name <nome>             nome da mostrare nella dashboard (default: git user.name)
@@ -253,8 +264,12 @@ async function commandSetup(flags: Record<string, string | boolean | undefined>)
       : 'Nella dashboard comparirai con uno pseudonimo',
   );
 
-  if (flags.vscode === true) applyEditors(config.port);
-  else printEditorSettings(config.port);
+  if (flags.vscode === true) {
+    applyEditors(config.port);
+    applyRuntimeRouting(config.port);
+  } else {
+    printEditorSettings(config.port);
+  }
 
   if (flags.autostart === true) {
     try {
@@ -278,8 +293,23 @@ function printEditorSettings(port: number, editor?: Editor): void {
   console.log(
     `\nAggiungi alle impostazioni utente di ${editor?.name ?? 'VS Code (e dei suoi derivati)'} (Preferences: Open User Settings (JSON)):\n` +
       `${JSON.stringify(editorSnippet(port), null, 2)}\n` +
-      (editor ? '' : 'Oppure rilancia il setup con --vscode per farlo scrivere al comando.'),
+      (editor
+        ? ''
+        : `Imposta anche ${API_URL_VAR}=${proxyUrl(port)} nell'ambiente utente, per Copilot CLI e le sessioni agentiche.\n` +
+          'Oppure rilancia il setup con --vscode per far fare tutto al comando.'),
   );
+}
+
+function applyRuntimeRouting(port: number): void {
+  try {
+    const result = installRuntimeRouting(port);
+    console.log(`Copilot CLI e sessioni agentiche: ${API_URL_VAR}=${proxyUrl(port)} (in ${result.persistedIn})`);
+  } catch (error) {
+    console.log(
+      `\nNon riesco a impostare ${API_URL_VAR} (${(error as Error).message}): impostala a mano a ${proxyUrl(port)}, ` +
+        'altrimenti Copilot CLI e le sessioni agentiche non vengono misurate.',
+    );
+  }
 }
 
 function applyEditors(port: number): void {
@@ -399,6 +429,7 @@ async function commandDoctor(): Promise<number> {
   for (const editor of editors) {
     const value = readOverride(editor);
     if (value && pointsToProxy(value, config.port)) configured.push(editor.name);
+    else if (!value && isOverrideCommented(editor)) notConfigured.push(`${editor.name} (impostazione commentata)`);
     else notConfigured.push(value ? `${editor.name} (punta a ${value}, atteso ${expected})` : editor.name);
   }
   if (configured.length > 0) {
@@ -410,6 +441,24 @@ async function commandDoctor(): Promise<number> {
       editors.length > 0
         ? `nessun editor passa dal proxy (${notConfigured.join(', ')}): rilancia "setup --vscode --force"`
         : 'nessun editor della famiglia VS Code trovato su questa macchina',
+    );
+  }
+
+  const runtimeUrl = readRuntimeRouting();
+  if (runtimeUrl && pointsToProxy(runtimeUrl, config.port)) {
+    check(true, `Copilot CLI e sessioni agentiche passano dal proxy (${API_URL_VAR})`);
+  } else {
+    warn(
+      runtimeUrl
+        ? `${API_URL_VAR} punta a ${runtimeUrl}, atteso ${expected}: rilancia "setup --vscode --force"`
+        : `${API_URL_VAR} non impostata: Copilot CLI e le sessioni agentiche in VS Code non vengono misurate. Rilancia "setup --vscode --force"`,
+    );
+  }
+  const stale = staleRuntimes(config.port);
+  if (stale.length > 0) {
+    warn(
+      `${stale.length} processi Copilot CLI / runtime agentico avviati senza ${API_URL_VAR} (pid ${stale.join(', ')}): ` +
+        "chiudi e riapri l'editor (non basta ricaricare la finestra) e i terminali con Copilot CLI",
     );
   }
 
@@ -454,8 +503,21 @@ interface ProxyHealth {
     lastEventAt: string | null;
     lastDeliveryAt: string | null;
     lastError: string | null;
+    lastEventByClient?: Record<string, string>;
   };
 }
+
+/** Pid dei runtime agentici in esecuzione che non passano dal proxy. */
+function staleRuntimes(port: number): number[] {
+  return (runningRuntimes() ?? [])
+    .filter((runtime) => !runtime.apiUrl || !pointsToProxy(runtime.apiUrl, port))
+    .map((runtime) => runtime.pid);
+}
+
+const CLIENT_LABELS: Record<string, string> = {
+  GitHubCopilotChat: 'estensione Copilot Chat',
+  copilot: 'Copilot CLI / runtime agentico',
+};
 
 async function readHealth(port: number): Promise<ProxyHealth | undefined> {
   try {
@@ -495,6 +557,30 @@ async function commandStatus(): Promise<number> {
   console.log(`copilot-proxy ${CLIENT_VERSION}`);
   console.log(`nome in dashboard: ${config.developerName ?? 'nessuno (pseudonimo)'}`);
   console.log(`avvio automatico: ${isAutostartInstalled() ? 'attivo' : 'non installato'}`);
+
+  // Instradamento: e' cio' che decide se il traffico passa di qui.
+  for (const editor of installedEditors()) {
+    const value = readOverride(editor);
+    const state =
+      value && pointsToProxy(value, config.port)
+        ? 'passa dal proxy'
+        : !value && isOverrideCommented(editor)
+          ? 'NON passa dal proxy (impostazione commentata)'
+          : value
+            ? `NON passa dal proxy (punta a ${value})`
+            : 'NON passa dal proxy (impostazione assente)';
+    console.log(`${editor.name}: ${state}`);
+  }
+  const runtimeUrl = readRuntimeRouting();
+  console.log(
+    `Copilot CLI / sessioni agentiche (${API_URL_VAR}): ${
+      runtimeUrl && pointsToProxy(runtimeUrl, config.port) ? 'passano dal proxy' : `NON passano dal proxy (${runtimeUrl ?? 'non impostata'})`
+    }`,
+  );
+  const stale = staleRuntimes(config.port);
+  if (stale.length > 0) {
+    console.log(`  ${stale.length} processi avviati prima del setup (pid ${stale.join(', ')}): riavvia l'editor`);
+  }
   if (!health) {
     console.log(`proxy: non in ascolto sulla porta ${config.port}`);
     return 1;
@@ -505,6 +591,9 @@ async function commandStatus(): Promise<number> {
   if (usage) {
     console.log(`eventi misurati: ${usage.recorded}, consegnati: ${usage.delivered}, scartati: ${usage.dropped}`);
     console.log(`ultimo evento: ${usage.lastEventAt ?? 'nessuno'}`);
+    for (const [family, at] of Object.entries(usage.lastEventByClient ?? {})) {
+      console.log(`  ${CLIENT_LABELS[family] ?? family}: ${at}`);
+    }
     console.log(`ultima consegna: ${usage.lastDeliveryAt ?? 'nessuna'}`);
     if (usage.lastError) console.log(`ultimo errore del collector: ${usage.lastError}`);
   }
@@ -524,6 +613,10 @@ function commandRestart(): number {
 }
 
 function commandUninstall(): number {
+  // Senza proxy in ascolto il runtime agentico non raggiungerebbe piu' Copilot.
+  if (uninstallRuntimeRouting()) {
+    console.log(`${API_URL_VAR} rimossa: Copilot CLI e sessioni agentiche tornano a parlare con GitHub.`);
+  }
   if (!uninstallAutostart()) {
     console.log('Avvio automatico non installato: niente da rimuovere.');
     return 0;
