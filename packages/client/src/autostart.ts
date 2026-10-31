@@ -1,12 +1,16 @@
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configDir } from './paths.js';
 
 const LABEL = 'com.vidiemme.copilot-proxy';
 const UNIT = 'copilot-proxy.service';
+/** Segnala al supervisore Windows che e' gia' staccato dalla finestra di avvio. */
+const SUPERVISED_VAR = 'COPILOT_PROXY_SUPERVISED';
+/** Pausa prima di rilanciare il proxy terminato, come `RestartSec` di systemd. */
+const RESTART_DELAY_MS = 5000;
 
 export interface AutostartResult {
   file: string;
@@ -22,6 +26,10 @@ export function autostartFile(): string | undefined {
   }
   if (process.platform === 'linux') {
     return join(homedir(), '.config', 'systemd', 'user', UNIT);
+  }
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA?.trim() || join(homedir(), 'AppData', 'Roaming');
+    return join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'copilot-proxy.cmd');
   }
   return undefined;
 }
@@ -55,9 +63,7 @@ function environmentOverrides(): Record<string, string> {
 export function installAutostart(): AutostartResult {
   const file = autostartFile();
   if (file === undefined) {
-    throw new Error(
-      `Avvio automatico non gestito su ${process.platform}. Su Windows aggiungi a mano un collegamento a "${process.execPath} ${cliEntry()} start" nella cartella Esecuzione automatica.`,
-    );
+    throw new Error(`Avvio automatico non gestito su ${process.platform}.`);
   }
 
   const entry = cliEntry();
@@ -65,12 +71,16 @@ export function installAutostart(): AutostartResult {
   mkdirSync(configDir(), { recursive: true, mode: 0o700 });
 
   const result: AutostartResult =
-    process.platform === 'darwin' ? installLaunchd(file, entry) : installSystemd(file, entry);
+    process.platform === 'darwin'
+      ? installLaunchd(file, entry)
+      : process.platform === 'win32'
+        ? installStartup(file, entry)
+        : installSystemd(file, entry);
 
   // La cache di npx non e' una posizione stabile: `npm cache clean` la svuota e
   // il servizio resterebbe a puntare nel vuoto.
   const warnings: string[] = [];
-  if (entry.includes('/_npx/')) {
+  if (/[\\/]_npx[\\/]/.test(entry)) {
     warnings.push(
       'Il servizio punta dentro la cache di npx, che puo\' essere ripulita. Per un avvio automatico stabile: npm i -g @vidiemme/copilot-proxy, poi rilancia il setup con --autostart',
     );
@@ -100,6 +110,8 @@ export function uninstallAutostart(): boolean {
   try {
     if (process.platform === 'darwin') {
       execFileSync('launchctl', ['bootout', launchdTarget()], { stdio: 'ignore' });
+    } else if (process.platform === 'win32') {
+      stopSupervisor();
     } else {
       execFileSync('systemctl', ['--user', 'disable', '--now', UNIT], { stdio: 'ignore' });
     }
@@ -118,6 +130,9 @@ export function restartAutostart(): void {
   if (!isAutostartInstalled()) throw new Error('avvio automatico non installato');
   if (process.platform === 'darwin') {
     execFileSync('launchctl', ['kickstart', '-k', launchdTarget()], { stdio: 'pipe' });
+  } else if (process.platform === 'win32') {
+    stopSupervisor();
+    launchSupervisor(cliEntry());
   } else {
     execFileSync('systemctl', ['--user', 'restart', UNIT], { stdio: 'pipe' });
   }
@@ -200,4 +215,101 @@ WantedBy=default.target
   execFileSync('systemctl', ['--user', 'enable', '--now', UNIT], { stdio: 'pipe' });
 
   return { file, removeHint: `systemctl --user disable --now ${UNIT} && rm ${file}` };
+}
+
+/**
+ * Script per la cartella Esecuzione automatica di Windows.
+ *
+ * Non serve essere amministratori, a differenza di un'attivita' pianificata
+ * all'accesso. In un `.cmd` il `%` va raddoppiato, altrimenti cmd lo espande
+ * come variabile.
+ */
+export function startupScript(execPath: string, entry: string, env: Record<string, string>): string {
+  const escape = (value: string): string => value.replace(/%/g, '%%');
+  const lines = [
+    '@echo off',
+    // Percorsi con caratteri accentati: il file e' UTF-8, la console no.
+    'chcp 65001 >nul',
+    ...Object.entries(env).map(([key, value]) => `set "${key}=${escape(value)}"`),
+    `"${escape(execPath)}" "${escape(entry)}" supervise`,
+  ];
+  return `${lines.join('\r\n')}\r\n`;
+}
+
+function installStartup(file: string, entry: string): AutostartResult {
+  writeFileSync(file, startupScript(process.execPath, entry, environmentOverrides()));
+  // Come `bootstrap` e `enable --now`: il proxy parte subito, non al prossimo accesso.
+  stopSupervisor();
+  launchSupervisor(entry);
+  return { file, removeHint: 'copilot-proxy uninstall' };
+}
+
+function supervisorPidFile(): string {
+  return join(configDir(), 'supervisor.pid');
+}
+
+/** Avvia il supervisore staccato da qualunque console, senza finestre. */
+function launchSupervisor(entry: string): void {
+  mkdirSync(configDir(), { recursive: true });
+  const log = openSync(join(configDir(), 'proxy.log'), 'a');
+  spawn(process.execPath, [entry, 'supervise'], {
+    detached: true,
+    windowsHide: true,
+    stdio: ['ignore', log, log],
+    env: { ...process.env, [SUPERVISED_VAR]: '1' },
+  }).unref();
+}
+
+/**
+ * Ferma il supervisore e, con lui, il proxy. Un pid riciclato puo' appartenere
+ * a un altro programma: si termina solo se e' ancora un processo Node.
+ */
+function stopSupervisor(): void {
+  let pid: number;
+  try {
+    pid = Number(readFileSync(supervisorPidFile(), 'utf-8').trim());
+  } catch {
+    return;
+  }
+  rmSync(supervisorPidFile(), { force: true });
+  if (!Number.isInteger(pid) || pid <= 0) return;
+
+  try {
+    const row = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf-8' });
+    if (!row.toLowerCase().includes(`"${basename(process.execPath).toLowerCase()}"`)) return;
+    execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+  } catch {
+    /* gia' terminato */
+  }
+}
+
+/**
+ * Tiene in vita il proxy su Windows, dove non c'e' un gestore di servizi
+ * utente come launchd o systemd.
+ *
+ * Lanciato dalla cartella Esecuzione automatica si rilancia staccato, cosi' la
+ * finestra di cmd si chiude subito; da li' riavvia il proxy ogni volta che
+ * termina. Su Windows l'arresto e' sempre forzato: si perdono al massimo gli
+ * eventi non ancora scritti nello spool, come a ogni spegnimento.
+ */
+export function runSupervisor(): void {
+  const entry = cliEntry();
+  if (process.env[SUPERVISED_VAR] !== '1') {
+    launchSupervisor(entry);
+    return;
+  }
+
+  writeFileSync(supervisorPidFile(), String(process.pid));
+  const launch = (): void => {
+    const child = spawn(process.execPath, [entry, 'start'], { windowsHide: true, stdio: 'inherit' });
+    let restarting = false;
+    const again = (): void => {
+      if (restarting) return;
+      restarting = true;
+      setTimeout(launch, RESTART_DELAY_MS);
+    };
+    child.on('exit', again);
+    child.on('error', again);
+  };
+  launch();
 }

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { apiUrlFromPsLine, isRuntimeCommand } from '../src/agentRuntime.js';
+import { startupScript } from '../src/autostart.js';
 import {
   applyEditorSettings,
   isOverrideCommented,
@@ -143,5 +144,23 @@ describe('verifica della porta', () => {
     server = undefined;
 
     expect(await portStatus(otherPort, '127.0.0.1')).toBe('free');
+  });
+});
+
+describe('avvio automatico su Windows', () => {
+  it('lancia il supervisore con i percorsi tra virgolette e il % raddoppiato', () => {
+    const script = startupScript(
+      'C:\\Program Files\\nodejs\\node.exe',
+      'C:\\Users\\Mario Rossi\\AppData\\Roaming\\npm\\node_modules\\@vidiemme\\copilot-proxy\\dist\\cli.js',
+      { COPILOT_PROXY_HOME: 'D:\\100%\\proxy' },
+    );
+
+    expect(script.split('\r\n')).toEqual([
+      '@echo off',
+      'chcp 65001 >nul',
+      'set "COPILOT_PROXY_HOME=D:\\100%%\\proxy"',
+      '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\Mario Rossi\\AppData\\Roaming\\npm\\node_modules\\@vidiemme\\copilot-proxy\\dist\\cli.js" supervise',
+      '',
+    ]);
   });
 });

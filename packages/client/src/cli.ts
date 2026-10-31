@@ -12,7 +12,13 @@ import {
   runningRuntimes,
   uninstallRuntimeRouting,
 } from './agentRuntime.js';
-import { installAutostart, isAutostartInstalled, restartAutostart, uninstallAutostart } from './autostart.js';
+import {
+  installAutostart,
+  isAutostartInstalled,
+  restartAutostart,
+  runSupervisor,
+  uninstallAutostart,
+} from './autostart.js';
 import { loadConfig, type ClientConfig, type ConfigSource } from './config.js';
 import {
   applyEditorSettings,
@@ -866,6 +872,10 @@ async function main(): Promise<void> {
       return;
     case 'uninstall':
       process.exitCode = commandUninstall();
+      return;
+    // Interno: lo lancia l'avvio automatico di Windows.
+    case 'supervise':
+      runSupervisor();
       return;
     default:
       console.error(`Comando sconosciuto: ${command}\n`);

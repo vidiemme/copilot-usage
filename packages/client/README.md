@@ -45,7 +45,7 @@ il pacchetto contiene i default aziendali Vidiemme, ma puo' usare un altro endpo
 | JetBrains / Android Studio, Eclipse, Xcode, Visual Studio | Non supportati: nessuna intercettazione TLS / `CONNECT` implementata. |
 | macOS | Avvio automatico tramite LaunchAgent `launchd` dell'utente. |
 | Linux | Avvio automatico tramite servizio utente `systemd`. |
-| Windows | Percorsi, impostazioni editor e `COPILOT_API_URL` gestiti. `--autostart` non registra un servizio: stampa il comando da aggiungere a Esecuzione automatica. Rilevamento dei path coperto dai test, da verificare su una postazione reale. |
+| Windows | Avvio automatico tramite `copilot-proxy.cmd` nella cartella Esecuzione automatica dell'utente, senza diritti di amministratore: avvia un supervisore nascosto che rilancia il proxy se termina. |
 
 > Le impostazioni di override di Copilot sono opzioni di **debug non supportate**:
 > possono cambiare con gli aggiornamenti dell'estensione. Verifica periodicamente
@@ -54,7 +54,7 @@ il pacchetto contiene i default aziendali Vidiemme, ma puo' usare un altro endpo
 
 ## Installazione rapida
 
-### Servizio persistente (consigliato su macOS e Linux)
+### Servizio persistente (consigliato)
 
 ```bash
 npm install -g @vidiemme/copilot-proxy@latest
@@ -93,8 +93,6 @@ npx @vidiemme/copilot-proxy@latest start
 
 `start` resta in primo piano: lascia il terminale aperto e usa `Ctrl+C` per fermarlo.
 Con questa modalita' il proxy va avviato prima di usare gli editor configurati.
-Su Windows usa questa modalita', oppure aggiungi a Esecuzione automatica il comando
-che `setup --autostart` stampa.
 
 ### Un collector diverso da quello aziendale
 
@@ -359,7 +357,7 @@ con `npx @vidiemme/copilot-proxy@latest`.
 | Opzione | Uso |
 | --- | --- |
 | `--vscode` | Configura VS Code e derivati installati, e `COPILOT_API_URL` per Copilot CLI e sessioni agentiche. |
-| `--autostart` | Registra e avvia il servizio utente su macOS/Linux. |
+| `--autostart` | Registra e avvia il servizio utente (launchd, systemd o Esecuzione automatica di Windows). |
 | `--port <n>` | Porta locale, default `8787`. |
 | `--workspace-roots <a,b>` | Directory assolute in cui risolvere i progetti. |
 | `--collector-url <url>` | Endpoint di ingest, incluso il path `/v1/usage`. |

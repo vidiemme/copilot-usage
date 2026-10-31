@@ -70,10 +70,16 @@ export function developerIdFor(config: ClientConfig): string {
   return pseudonymize(`identity:${identity.toLowerCase()}`, config.developerIdSalt);
 }
 
+/** Su Windows i path non distinguono le maiuscole: VS Code salva `c:\...`, la home e' `C:\...`. */
+function comparable(path: string): string {
+  const absolute = resolve(path);
+  return sep === '\\' ? absolute.toLowerCase() : absolute;
+}
+
 function inside(path: string, roots: string[]): boolean {
-  const target = resolve(path);
+  const target = comparable(path);
   return roots.some((root) => {
-    const base = resolve(root);
+    const base = comparable(root);
     return target === base || target.startsWith(base.endsWith(sep) ? base : `${base}${sep}`);
   });
 }

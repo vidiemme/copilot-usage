@@ -10,11 +10,14 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         # Il minimo supportato dalle postazioni e l'LTS corrente.
         node-version: ['22.19.0', '22', '24']
+        # Le postazioni sono anche Windows: percorsi e avvio automatico cambiano.
+        os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v6
 
