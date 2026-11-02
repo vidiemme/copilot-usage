@@ -263,6 +263,13 @@ describe('caricamento dello storico', () => {
     expect(result.skippedChat.unpriced.get('modello-ignoto')).toBe(1);
   });
 
+  it('conta le sessioni fuori dalle cartelle indicate invece di ignorarle', () => {
+    const result = plan(rates);
+
+    expect(result.skippedOutside.folders).toEqual(new Map([[join(root, 'altrove'), 1]]));
+    expect(result.skippedOutside.noFolder).toBe(0);
+  });
+
   it('senza listino carica comunque Copilot CLI', () => {
     const result = plan(undefined);
 

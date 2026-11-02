@@ -683,6 +683,38 @@ function printPlan(plan: ReloadPlan): void {
   for (const [model, requests] of unpriced) {
     console.log(`  escluse ${requests} richieste con ${model}: il collector non ha la tariffa`);
   }
+
+  const { folders, noFolder } = plan.skippedOutside;
+  if (noFolder > 0) {
+    console.log(`\nEscluse ${noFolder} sessioni senza cartella locale (finestra vuota, WSL, SSH o container)`);
+  }
+  if (folders.size > 0) {
+    const total = [...folders.values()].reduce((sum, count) => sum + count, 0);
+    console.log(`\nEscluse ${total} chiamate/richieste fuori dalle cartelle indicate. Le principali:`);
+    for (const [folder, count] of [...folders].sort(([, a], [, b]) => b - a).slice(0, 10)) {
+      console.log(`  ${count}  ${folder}`);
+    }
+    console.log('Per includerle: reload <cartella che le contiene>');
+  }
+
+  printMonths(plan);
+}
+
+/** Eventi per mese e per sorgente: un mese vuoto qui e' vuoto anche in dashboard. */
+function printMonths(plan: ReloadPlan): void {
+  const months = new Map<string, { cli: number; chat: number }>();
+  for (const event of plan.events) {
+    const month = event.occurredAt.slice(0, 7);
+    const row = months.get(month) ?? { cli: 0, chat: 0 };
+    if (event.endpoint === '/reload/vscode-chat') row.chat += 1;
+    else row.cli += 1;
+    months.set(month, row);
+  }
+  if (months.size === 0) return;
+  console.log('\nEventi per mese (Copilot CLI / chat di VS Code):');
+  for (const [month, { cli, chat }] of [...months].sort(([a], [b]) => a.localeCompare(b))) {
+    console.log(`  ${month}  ${cli} / ${chat}`);
+  }
 }
 
 async function confirm(question: string): Promise<boolean> {
@@ -762,6 +794,11 @@ async function commandReload(
   });
   process.stdout.write('\n');
   console.log(`Accettati ${result.accepted}, scartati dal collector ${result.rejected}.`);
+  if (result.expired > 0) {
+    console.log(
+      `${result.expired} eventi accolti ma precedenti alla retention del collector: non compaiono nei report.`,
+    );
+  }
   if (result.error) {
     console.error(`${result.error}: ${result.failed} eventi non inviati. Rilancia lo stesso comando per riprendere.`);
     return 1;

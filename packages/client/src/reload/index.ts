@@ -38,6 +38,12 @@ export interface ReloadPlan {
   chatCredits: number;
   /** Richieste di chat lette ma non caricabili, con il motivo. */
   skippedChat: { noBilling: number; unpriced: Map<string, number>; noRates: number };
+  /**
+   * Chiamate e richieste del periodo senza un repository sotto i root: la
+   * cartella di lavoro e' altrove (`folders`, con il conteggio) o non e' un
+   * path locale (`noFolder`: finestra senza cartella, WSL, SSH, container).
+   */
+  skippedOutside: { folders: Map<string, number>; noFolder: number };
   sources: Record<ReloadSource, number>;
 }
 
@@ -123,7 +129,17 @@ export function buildReloadPlan(
     events: [],
     chatCredits: 0,
     skippedChat: { noBilling: 0, unpriced: new Map(), noRates: 0 },
+    skippedOutside: { folders: new Map(), noFolder: 0 },
     sources: { 'copilot-cli': 0, 'vscode-chat': 0 },
+  };
+
+  const skipOutside = (folders: string[]) => {
+    const folder = folders[0];
+    if (!folder) {
+      plan.skippedOutside.noFolder += 1;
+      return;
+    }
+    plan.skippedOutside.folders.set(folder, (plan.skippedOutside.folders.get(folder) ?? 0) + 1);
   };
 
   const base = (repository: RepositoryIdentity, source: ReloadSource) => ({
@@ -139,7 +155,10 @@ export function buildReloadPlan(
   for (const call of inputs.cliCalls) {
     if (!inRange(call.occurredAt, options)) continue;
     const repository = projectOf([call.cwd]);
-    if (!repository) continue;
+    if (!repository) {
+      skipOutside([call.cwd]);
+      continue;
+    }
     plan.events.push({
       ...base(repository, 'copilot-cli'),
       requestId: call.requestId,
@@ -156,7 +175,10 @@ export function buildReloadPlan(
   for (const request of inputs.chatRequests) {
     if (!inRange(request.roundTimes[0]!, options)) continue;
     const repository = projectOf(request.folders);
-    if (!repository) continue;
+    if (!repository) {
+      skipOutside(request.folders);
+      continue;
+    }
 
     if (request.credits === null || request.promptTokens === null || request.completionTokens === null) {
       plan.skippedChat.noBilling += 1;
@@ -246,6 +268,8 @@ export function chatModels(requests: ChatRequest[]): string[] {
 export interface SendResult {
   accepted: number;
   rejected: number;
+  /** Eventi accolti ma precedenti alla retention del collector: non entrano nei report. */
+  expired: number;
   /** Eventi non consegnati per errore di rete o del servizio: basta rilanciare. */
   failed: number;
   error?: string;
@@ -261,7 +285,7 @@ export async function sendEvents(
   events: UsageEventPayload[],
   onProgress?: (sent: number) => void,
 ): Promise<SendResult> {
-  const result: SendResult = { accepted: 0, rejected: 0, failed: 0 };
+  const result: SendResult = { accepted: 0, rejected: 0, expired: 0, failed: 0 };
   const batches = chunk(events, MAX_EVENTS_PER_BATCH);
 
   for (let index = 0; index < batches.length; index += 1) {
@@ -286,9 +310,10 @@ export async function sendEvents(
       return result;
     }
 
-    const body = (await response.json().catch(() => ({}))) as { rejected?: unknown[] };
+    const body = (await response.json().catch(() => ({}))) as { rejected?: unknown[]; expired?: unknown };
     const rejected = Array.isArray(body.rejected) ? body.rejected.length : 0;
     result.rejected += rejected;
+    if (typeof body.expired === 'number') result.expired += body.expired;
     result.accepted += batch.length - rejected;
     onProgress?.(result.accepted + result.rejected);
   }
