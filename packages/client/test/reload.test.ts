@@ -252,7 +252,7 @@ describe('caricamento dello storico', () => {
     expect(result.events.map((event) => event.requestId)).toEqual(['vscode-chat:r1:0', 'vscode-chat:r1:1', 'g1']);
     expect(new Set(result.events.map((event) => event.projectId))).toEqual(new Set(['cliente/web/portale']));
     expect(result.events.every((event) => event.developerId === 'dev-1')).toBe(true);
-    expect(result.sources).toEqual({ 'copilot-cli': 1, 'vscode-chat': 1 });
+    expect(result.sources).toMatchObject({ 'copilot-cli': 1, 'vscode-chat': 1, 'claude-code': 0 });
     expect(result.chatCredits).toBe(40);
   });
 

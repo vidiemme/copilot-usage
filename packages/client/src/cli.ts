@@ -30,18 +30,28 @@ import {
   readOverride,
   type Editor,
 } from './editors.js';
+import {
+  applyLiteLLMRouting,
+  copilotModelMatcher,
+  findLiteLLMConfigs,
+  readCopilotRoutes,
+  type CopilotRoute,
+} from './litellm.js';
 import { configDir, configFile } from './paths.js';
 import {
   buildReloadPlan,
   chatModels,
+  CLIENT_NAMES,
   developerIdFor,
   fetchRates,
   proxyFirstStart,
   readLocalSessions,
   sendEvents,
+  type AgentPolicy,
   type RateBook,
   type ReloadOptions,
   type ReloadPlan,
+  type ReloadSource,
 } from './reload/index.js';
 import { buildApp } from './server.js';
 import { gitIdentity, portStatus } from './setupHelpers.js';
@@ -68,6 +78,9 @@ Opzioni di setup:
                             imposta COPILOT_API_URL per Copilot CLI e le sessioni
                             agentiche (Copilot CLI / SDK) dentro l'editor
   --autostart               avvia il proxy a ogni accesso, senza doverlo lanciare
+  --litellm                 fa passare dal proxy le rotte di LiteLLM verso Copilot
+                            (github_copilot/...), impostandone api_base
+  --litellm-config <file>   config di LiteLLM, se non e' fra quelle trovate da solo
   --port <n>                porta locale del proxy (default 8787; chiesta se interattivo)
   --name <nome>             nome da mostrare nella dashboard (default: git user.name)
   --email <email>           email associata (default: git user.email)
@@ -97,8 +110,13 @@ Opzioni di reload:
   --to <data>               fino al giorno indicato, compreso
   --dry-run                 mostra cosa verrebbe caricato, senza inviare nulla
   --yes                     non chiede conferma (necessario senza terminale)
+  --litellm-config <file>   config di LiteLLM con cui riconoscere le chiamate di
+                            Claude Code, Cline e opencode passate da Copilot
+  --agents-all              carica tutte le chiamate di Claude Code, Cline e
+                            opencode del periodo, senza filtro sui modelli
 
-Legge le sessioni di Copilot CLI e le chat di Copilot in VS Code e derivati. Si
+Legge le sessioni di Copilot CLI, le chat di Copilot in VS Code e derivati, e
+quelle di Claude Code, Cline (con Roo e Kilo) e opencode passate da Copilot. Si
 puo' rilanciare: gli eventi gia' caricati non vengono duplicati.
 `.trimStart();
 
@@ -285,6 +303,11 @@ async function commandSetup(flags: Record<string, string | boolean | undefined>)
     return 1;
   }
 
+  const litellmFiles = flags['litellm-config'] ? [String(flags['litellm-config'])] : [];
+  if (flags.litellm === true || litellmFiles.length > 0) {
+    applyLiteLLM(values, config.port, litellmFiles);
+  }
+
   writeConfigFile(values);
   console.log(`Scritto ${configFile()}`);
   console.log(`Proxy su http://127.0.0.1:${config.port}`);
@@ -302,6 +325,7 @@ async function commandSetup(flags: Record<string, string | boolean | undefined>)
   } else {
     printEditorSettings(config.port);
   }
+  if (flags.litellm !== true && litellmFiles.length === 0) hintLiteLLM(config.port);
 
   if (flags.autostart === true) {
     try {
@@ -319,6 +343,70 @@ async function commandSetup(flags: Record<string, string | boolean | undefined>)
   console.log('\nPoi avvia il proxy con:  npx @vidiemme/copilot-proxy start');
   console.log('Per non doverlo fare ogni volta, rilancia il setup con --autostart');
   return 0;
+}
+
+/** Config di LiteLLM gia' note (dal setup) piu' quelle indicate o trovate ora. */
+function liteLLMConfigs(explicit: string[]): string[] {
+  const known = (readConfigFile().LITELLM_CONFIG ?? '').split(',').filter((file) => file.trim().length > 0);
+  return findLiteLLMConfigs([...explicit, ...known]);
+}
+
+function routesThroughProxy(routes: CopilotRoute[], port: number): boolean {
+  return routes.every((route) => route.apiBase !== undefined && pointsToProxy(route.apiBase, port));
+}
+
+/**
+ * Fa passare dal proxy le rotte di LiteLLM verso Copilot. Il momento resta
+ * nella configurazione: da li' in poi `reload` lascia quelle chiamate al
+ * traffico misurato dal vivo.
+ */
+function applyLiteLLM(values: Record<string, string>, port: number, explicit: string[]): void {
+  const files = liteLLMConfigs(explicit);
+  if (files.length === 0) {
+    console.log(
+      '\nLiteLLM: nessuna configurazione con modelli github_copilot/ trovata. ' +
+        'Indicala con --litellm-config <file> (il file passato a "litellm --config").',
+    );
+    return;
+  }
+
+  let routed = 0;
+  for (const file of files) {
+    let result: ReturnType<typeof applyLiteLLMRouting>;
+    try {
+      result = applyLiteLLMRouting(file, port);
+    } catch (error) {
+      console.log(`\nLiteLLM: non riesco a modificare ${file}: ${(error as Error).message}`);
+      continue;
+    }
+    routed += result.updated + result.already;
+    console.log(
+      `LiteLLM: ${file}: ${result.updated} modelli Copilot indirizzati al proxy` +
+        (result.already > 0 ? `, ${result.already} gia' indirizzati` : '') +
+        (result.backup ? ` (backup in ${result.backup})` : ''),
+    );
+    for (const route of result.foreign) {
+      console.log(
+        `  ${route.alias} lasciato su ${route.apiBase}: se e' un host Copilot del piano, ` +
+          'mettilo in --upstream e rilancia il setup',
+      );
+    }
+  }
+  if (routed === 0) return;
+
+  values.LITELLM_CONFIG = files.join(',');
+  values.LITELLM_MEASURED_SINCE ??= new Date().toISOString();
+  console.log("Riavvia LiteLLM perche' la configurazione abbia effetto.");
+}
+
+/** Il setup non tocca LiteLLM senza --litellm, ma lo segnala se lo trova. */
+function hintLiteLLM(port: number): void {
+  const pending = liteLLMConfigs([]).filter((file) => !routesThroughProxy(readCopilotRoutes(file) ?? [], port));
+  if (pending.length === 0) return;
+  console.log(
+    `\nLiteLLM usa Copilot senza passare dal proxy (${pending.join(', ')}): ` +
+      'rilancia il setup con --litellm per misurarne il traffico.',
+  );
 }
 
 function printEditorSettings(port: number, editor?: Editor): void {
@@ -486,6 +574,15 @@ async function commandDoctor(): Promise<number> {
         : `${API_URL_VAR} non impostata: Copilot CLI e le sessioni agentiche in VS Code non vengono misurate. Rilancia "setup --vscode --force"`,
     );
   }
+  for (const file of liteLLMConfigs([])) {
+    const routes = readCopilotRoutes(file) ?? [];
+    if (routesThroughProxy(routes, config.port)) {
+      check(true, `LiteLLM passa dal proxy per ${routes.length} modelli Copilot (${file})`);
+    } else {
+      warn(`LiteLLM usa Copilot senza passare dal proxy (${file}): rilancia "setup --litellm --force"`);
+    }
+  }
+
   const stale = staleRuntimes(config.port);
   if (stale.length > 0) {
     warn(
@@ -649,7 +746,7 @@ function formatTokens(value: number): string {
   return value.toLocaleString('it-IT');
 }
 
-function printPlan(plan: ReloadPlan): void {
+function printPlan(plan: ReloadPlan, knowsRoutes: boolean): void {
   const rows = new Map<string, { calls: number; usage: TokenCounters }>();
   for (const event of plan.events) {
     const row = rows.get(event.projectId) ?? {
@@ -676,12 +773,35 @@ function printPlan(plan: ReloadPlan): void {
     `\nCopilot CLI e sessioni agentiche: ${plan.sources['copilot-cli']} chiamate` +
       `\nChat di VS Code: ${plan.sources['vscode-chat']} richieste, ${formatTokens(Math.round(plan.chatCredits))} crediti addebitati`,
   );
+  for (const source of AGENT_SOURCES) {
+    if (plan.sources[source] > 0) console.log(`${SOURCE_LABELS[source]}: ${plan.sources[source]} chiamate passate da Copilot`);
+  }
 
   const { noBilling, unpriced, noRates } = plan.skippedChat;
   if (noBilling > 0) console.log(`  escluse ${noBilling} richieste salvate senza crediti (editor troppo vecchio)`);
   if (noRates > 0) console.log(`  escluse ${noRates} richieste: senza listino non si possono ricostruire`);
   for (const [model, requests] of unpriced) {
     console.log(`  escluse ${requests} richieste con ${model}: il collector non ha la tariffa`);
+  }
+
+  const { notRouted, measured } = plan.skippedAgents;
+  if (notRouted.size > 0) {
+    const total = [...notRouted.values()].reduce((sum, count) => sum + count, 0);
+    console.log(
+      knowsRoutes
+        ? `\nEscluse ${total} chiamate di harness con modelli che LiteLLM non mandava a Copilot:`
+        : `\nEscluse ${total} chiamate di harness: senza una config di LiteLLM non si sa se passavano da Copilot:`,
+    );
+    for (const [label, count] of [...notRouted].sort(([, a], [, b]) => b - a).slice(0, 10)) {
+      console.log(`  ${count}  ${label}`);
+    }
+    console.log(
+      'Se passavano da Copilot: --litellm-config <file> con la config di LiteLLM di allora, ' +
+        'oppure --agents-all per caricare tutto il periodo indicato.',
+    );
+  }
+  if (measured > 0) {
+    console.log(`\nEscluse ${measured} chiamate di harness da quando LiteLLM passa dal proxy: gia' misurate dal vivo`);
   }
 
   const { folders, noFolder } = plan.skippedOutside;
@@ -700,26 +820,55 @@ function printPlan(plan: ReloadPlan): void {
   printMonths(plan);
 }
 
+const SOURCE_LABELS: Record<ReloadSource, string> = {
+  'copilot-cli': 'Copilot CLI',
+  'vscode-chat': 'chat di VS Code',
+  'claude-code': 'Claude Code',
+  cline: 'Cline',
+  opencode: 'opencode',
+};
+
+const AGENT_SOURCES: ReloadSource[] = ['claude-code', 'cline', 'opencode'];
+
 /** Eventi per mese e per sorgente: un mese vuoto qui e' vuoto anche in dashboard. */
 function printMonths(plan: ReloadPlan): void {
-  const months = new Map<string, { cli: number; chat: number }>();
+  const sourceOf = new Map(Object.entries(CLIENT_NAMES).map(([source, client]) => [client, source as ReloadSource]));
+  // Le due sorgenti di Copilot sempre, gli harness solo se ci sono.
+  const columns = (Object.keys(SOURCE_LABELS) as ReloadSource[]).filter(
+    (source) => !AGENT_SOURCES.includes(source) || plan.sources[source] > 0,
+  );
+  const months = new Map<string, Map<ReloadSource, number>>();
   for (const event of plan.events) {
+    const source = sourceOf.get(event.clientName ?? '');
+    if (!source) continue;
     const month = event.occurredAt.slice(0, 7);
-    const row = months.get(month) ?? { cli: 0, chat: 0 };
-    if (event.endpoint === '/reload/vscode-chat') row.chat += 1;
-    else row.cli += 1;
+    const row = months.get(month) ?? new Map<ReloadSource, number>();
+    row.set(source, (row.get(source) ?? 0) + 1);
     months.set(month, row);
   }
   if (months.size === 0) return;
-  console.log('\nEventi per mese (Copilot CLI / chat di VS Code):');
-  for (const [month, { cli, chat }] of [...months].sort(([a], [b]) => a.localeCompare(b))) {
-    console.log(`  ${month}  ${cli} / ${chat}`);
+  console.log(`\nEventi per mese (${columns.map((source) => SOURCE_LABELS[source]).join(' / ')}):`);
+  for (const [month, row] of [...months].sort(([a], [b]) => a.localeCompare(b))) {
+    console.log(`  ${month}  ${columns.map((source) => row.get(source) ?? 0).join(' / ')}`);
   }
 }
 
 async function confirm(question: string): Promise<boolean> {
   const answer = await promptLine(`${question} [s/N] `);
   return /^(s|si|sì|y|yes)$/i.test(answer);
+}
+
+/** Come riconoscere le chiamate di Claude Code, Cline e opencode passate da Copilot. */
+function agentPolicy(flags: Record<string, string | boolean | undefined>): AgentPolicy {
+  const files = liteLLMConfigs(flags['litellm-config'] ? [String(flags['litellm-config'])] : []);
+  const routes = files.flatMap((file) => readCopilotRoutes(file) ?? []);
+  const since = readConfigFile().LITELLM_MEASURED_SINCE;
+  const measuredSince = since ? new Date(since) : undefined;
+  return {
+    matcher: routes.length > 0 ? copilotModelMatcher(routes) : undefined,
+    all: flags['agents-all'] === true,
+    measuredSince: measuredSince && !Number.isNaN(measuredSince.getTime()) ? measuredSince : undefined,
+  };
 }
 
 async function commandReload(
@@ -735,6 +884,7 @@ async function commandReload(
       markers: config.projectMarkers,
       from: flags.from ? parseDate(String(flags.from), false) : undefined,
       to: flags.to ? parseDate(String(flags.to), true) : undefined,
+      agents: agentPolicy(flags),
     };
   } catch (error) {
     console.error(`${(error as Error).message}\n\nSe e' la prima volta:  npx @vidiemme/copilot-proxy setup`);
@@ -755,10 +905,10 @@ async function commandReload(
   const plan = buildReloadPlan(inputs, options, developerIdFor(config), rates);
   if (plan.events.length === 0) {
     console.log('Nessuna sessione da caricare nel periodo indicato.');
-    printPlan(plan);
+    printPlan(plan, options.agents?.matcher !== undefined);
     return 0;
   }
-  printPlan(plan);
+  printPlan(plan, options.agents?.matcher !== undefined);
 
   // Le chat di VS Code non hanno un id in comune con il traffico misurato dal
   // vivo: nel periodo in cui il proxy era attivo finirebbero contate due volte.
@@ -868,6 +1018,9 @@ async function main(): Promise<void> {
       anonymous: { type: 'boolean' },
       vscode: { type: 'boolean' },
       autostart: { type: 'boolean' },
+      litellm: { type: 'boolean' },
+      'litellm-config': { type: 'string' },
+      'agents-all': { type: 'boolean' },
       force: { type: 'boolean' },
       from: { type: 'string' },
       to: { type: 'string' },

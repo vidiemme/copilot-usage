@@ -12,11 +12,25 @@ import { readRepositoryIdentity } from '../gitRepository.js';
 import { configDir } from '../paths.js';
 import { ProjectDetector } from '../projectDetector.js';
 import { gitIdentity } from '../setupHelpers.js';
+import { readAgentCalls, type AgentCall } from './agents.js';
 import { readCliCalls, type CliCall } from './copilotCli.js';
 import { reconstructRounds, type RateTier } from './reconstruct.js';
 import { readChatRequests, type ChatRequest } from './vscodeChat.js';
 
-export type ReloadSource = 'copilot-cli' | 'vscode-chat';
+export type ReloadSource = 'copilot-cli' | 'vscode-chat' | 'claude-code' | 'cline' | 'opencode';
+
+/**
+ * Quali chiamate degli harness di terze parti sono passate da Copilot. I loro
+ * log non lo dicono: lo si ricava dalle rotte di LiteLLM verso Copilot.
+ */
+export interface AgentPolicy {
+  /** Modello Copilot con cui prezzare la chiamata, o `undefined` se LiteLLM non la mandava a Copilot. */
+  matcher?: ((models: string[]) => string | undefined) | undefined;
+  /** Tutte le chiamate del periodo, senza filtro: chi carica sa che passavano da Copilot. */
+  all?: boolean | undefined;
+  /** Da qui LiteLLM passa dal proxy: il resto e' gia' misurato dal vivo. */
+  measuredSince?: Date | undefined;
+}
 
 export interface ReloadOptions {
   roots: string[];
@@ -24,6 +38,7 @@ export interface ReloadOptions {
   from?: Date | undefined;
   /** Esclusivo. */
   to?: Date | undefined;
+  agents?: AgentPolicy | undefined;
 }
 
 export interface RateBook {
@@ -44,19 +59,31 @@ export interface ReloadPlan {
    * path locale (`noFolder`: finestra senza cartella, WSL, SSH, container).
    */
   skippedOutside: { folders: Map<string, number>; noFolder: number };
+  /**
+   * Chiamate degli harness escluse: con modelli che LiteLLM non mandava a
+   * Copilot (per `strumento modello`), o gia' misurate dal proxy.
+   */
+  skippedAgents: { notRouted: Map<string, number>; measured: number };
   sources: Record<ReloadSource, number>;
 }
 
 export interface ReloadInputs {
   cliCalls: CliCall[];
   chatRequests: ChatRequest[];
+  agentCalls?: AgentCall[];
 }
 
 /** Clienti con cui si presentano gli eventi ricaricati: la famiglia e' quella del traffico dal vivo. */
-const CLIENT_NAMES: Record<ReloadSource, string> = {
+export const CLIENT_NAMES: Record<ReloadSource, string> = {
   'copilot-cli': 'copilot/reload',
   'vscode-chat': 'GitHubCopilotChat/reload',
+  'claude-code': 'claude-code/reload',
+  cline: 'cline/reload',
+  opencode: 'opencode/reload',
 };
+
+/** Il provider nativo di opencode e Cline parla direttamente con Copilot. */
+const COPILOT_PROVIDERS = new Set(['github-copilot', 'copilot']);
 
 /**
  * Pseudonimo del developer per lo storico.
@@ -130,7 +157,8 @@ export function buildReloadPlan(
     chatCredits: 0,
     skippedChat: { noBilling: 0, unpriced: new Map(), noRates: 0 },
     skippedOutside: { folders: new Map(), noFolder: 0 },
-    sources: { 'copilot-cli': 0, 'vscode-chat': 0 },
+    skippedAgents: { notRouted: new Map(), measured: 0 },
+    sources: { 'copilot-cli': 0, 'vscode-chat': 0, 'claude-code': 0, cline: 0, opencode: 0 },
   };
 
   const skipOutside = (folders: string[]) => {
@@ -224,8 +252,53 @@ export function buildReloadPlan(
     plan.sources['vscode-chat'] += 1;
   }
 
+  const agents = options.agents ?? {};
+  for (const call of inputs.agentCalls ?? []) {
+    if (!inRange(call.occurredAt, options)) continue;
+    // Prima il provider: le chiamate che non passavano da Copilot non vanno
+    // nemmeno contate fra quelle fuori dalle cartelle.
+    const model = copilotModel(call, agents);
+    if (model === undefined) {
+      const key = `${call.tool} ${call.models[0] ?? 'modello sconosciuto'}`;
+      plan.skippedAgents.notRouted.set(key, (plan.skippedAgents.notRouted.get(key) ?? 0) + 1);
+      continue;
+    }
+    if (agents.measuredSince && call.occurredAt >= agents.measuredSince) {
+      plan.skippedAgents.measured += 1;
+      continue;
+    }
+    const repository = call.cwd ? projectOf([call.cwd]) : undefined;
+    if (!repository) {
+      skipOutside(call.cwd ? [call.cwd] : []);
+      continue;
+    }
+    plan.events.push({
+      ...base(repository, call.tool),
+      requestId: call.requestId,
+      occurredAt: call.occurredAt.toISOString(),
+      sessionId: call.sessionId,
+      endpoint: `/reload/${call.tool}`,
+      model,
+      usage: call.usage,
+      durationMs: call.durationMs,
+    });
+    plan.sources[call.tool] += 1;
+  }
+
   plan.events.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
   return plan;
+}
+
+/**
+ * Modello Copilot di una chiamata di un harness; `undefined` se non passava da
+ * Copilot, `null` se ci passava ma il modello non e' noto.
+ */
+function copilotModel(call: AgentCall, policy: AgentPolicy): string | null | undefined {
+  const declared = call.models[0] ?? null;
+  if (call.provider && COPILOT_PROVIDERS.has(call.provider)) return declared;
+  const routed = policy.matcher?.(call.models);
+  if (routed) return routed;
+  return policy.all ? declared : undefined;
 }
 
 /** Legge le sessioni salvate sulla macchina. */
@@ -233,6 +306,7 @@ export function readLocalSessions(options: ReloadOptions): ReloadInputs {
   return {
     cliCalls: readCliCalls(undefined, options.from),
     chatRequests: readChatRequests(undefined, options.from),
+    agentCalls: readAgentCalls(options.from),
   };
 }
 

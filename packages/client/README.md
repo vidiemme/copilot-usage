@@ -309,7 +309,11 @@ Se usi Claude Code, Codex o altri harness tramite un traduttore/provider Copilot
 
 1. Nel proxy intermedio cambia l'URL del provider Copilot in `http://127.0.0.1:8787`,
    senza path aggiuntivi. Il nome dell'opzione dipende dallo strumento (`baseURL`,
-   `api_base`, ...).
+   `api_base`, ...). Per **LiteLLM** lo fa `setup --litellm`: trova la config (dal
+   processo in esecuzione, dai LaunchAgent o in `~/litellm/config.yaml` e simili;
+   altrimenti `--litellm-config <file>`), imposta `api_base` sui modelli
+   `github_copilot/...` conservando commenti e backup, e lascia stare gli altri
+   provider. Va poi riavviato LiteLLM; `doctor` segnala le rotte che non passano dal proxy.
 2. Lascia `UPSTREAM_BASE_URL` del proxy di misura al suo default Copilot. Se il proxy
    intermedio usava un host del piano (per esempio `api.business.githubcopilot.com`),
    metti quello in `UPSTREAM_BASE_URL`.
@@ -359,6 +363,8 @@ con `npx @vidiemme/copilot-proxy@latest`.
 | --- | --- |
 | `--vscode` | Configura VS Code e derivati installati, e `COPILOT_API_URL` per Copilot CLI e sessioni agentiche. |
 | `--autostart` | Registra e avvia il servizio utente (launchd, systemd o Esecuzione automatica di Windows). |
+| `--litellm` | Fa passare dal proxy i modelli `github_copilot/...` della config di LiteLLM (vedi [Harness con proxy intermedio](#harness-con-proxy-intermedio)). |
+| `--litellm-config <file>` | Config di LiteLLM da usare, se non viene trovata da sola. |
 | `--port <n>` | Porta locale, default `8787`. |
 | `--workspace-roots <a,b>` | Directory assolute in cui risolvere i progetti. |
 | `--collector-url <url>` | Endpoint di ingest, incluso il path `/v1/usage`. |
@@ -391,11 +397,26 @@ copilot-proxy reload ~/Work --from 2026-10-01 --to 2026-10-31             # cari
 | `--from <data>`, `--to <data>` | Periodo, estremi compresi, in ora locale (`AAAA-MM-GG`). Senza, tutto lo storico disponibile. |
 | `--dry-run` | Mostra progetti, chiamate e token che verrebbero caricati, senza inviare. |
 | `--yes` | Salta la conferma; necessario quando non c'e' un terminale. |
+| `--litellm-config <file>` | Config di LiteLLM con cui riconoscere le chiamate degli harness passate da Copilot, se non e' quella del setup. |
+| `--agents-all` | Carica tutte le chiamate degli harness nel periodo, senza filtro sui modelli. |
 
 | Sorgente | Dove | Precisione |
 | --- | --- | --- |
 | Copilot CLI e sessioni agentiche in VS Code | `~/.copilot/session-state` | Esatta: contatori di ogni chiamata. |
 | Chat di Copilot in VS Code e derivati | `workspaceStorage/*/chatSessions` | Costo esatto, token stimati (sotto). |
+| Claude Code | `~/.claude/projects` | Esatta, se passava da Copilot (sotto). |
+| Cline, Roo Code, Kilo Code | `globalStorage/<estensione>/tasks`, `~/.cline/data/tasks` | Esatta, se passava da Copilot. |
+| opencode | `~/.local/share/opencode` (`opencode.db` o `storage/`) | Esatta, se passava da Copilot. |
+
+Gli harness di terze parti non registrano se una chiamata e' andata a Copilot o
+a un altro provider. `reload` la carica quando il modello chiesto corrisponde a
+una rotta `github_copilot/...` della config di LiteLLM (quella registrata da
+`setup --litellm`, trovata sulla macchina o passata con `--litellm-config`), e la
+prezza con il modello Copilot di quella rotta; con il provider `github-copilot`
+di opencode e Cline la carica sempre. Le altre restano fuori e sono contate nel
+riepilogo; se la config di allora era diversa, `--agents-all` con `--from`/`--to`
+carica tutto il periodo. Dal momento del `setup --litellm` quelle chiamate sono
+misurate dal vivo e `reload` le esclude.
 
 Le chat di VS Code conservano per ogni richiesta i crediti addebitati, l'output
 totale e il contesto dell'ultimo round, non la ripartizione fra i round. `reload`
@@ -404,8 +425,8 @@ la ricostruisce in modo che, prezzata con il listino del collector (letto da
 la divisione fra cache letta e scritta e' una stima. Le richieste salvate senza
 crediti, da versioni vecchie dell'estensione, vengono escluse e contate nel riepilogo.
 
-Gli eventi caricati si riconoscono dal client `GitHubCopilotChat/reload` e
-`copilot/reload`. Il developer e' uno pseudonimo dell'email (il token Copilot
+Gli eventi caricati si riconoscono dal client `GitHubCopilotChat/reload`,
+`copilot/reload`, `claude-code/reload`, `cline/reload` e `opencode/reload`. Il developer e' uno pseudonimo dell'email (il token Copilot
 usato dal proxy qui non c'e'): con un nome configurato il collector lo unisce
 al traffico dal vivo sotto lo stesso nome, in anonimo resta un developer a parte.
 
