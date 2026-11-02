@@ -254,8 +254,9 @@ Non serve un'impostazione per repository. Non impostare `overrideProxyUrl`:
 riguarda un altro endpoint, quello delle code completions.
 
 Il setup salva un backup con suffisso `.bak` prima di modificare un file esistente.
-Se il file contiene commenti, virgole finali o non e' JSON valido, non lo riscrive
-e stampa lo snippet da inserire manualmente. Poi riavvia l'editor.
+Aggiunge o aggiorna solo le due chiavi: commenti, virgole finali e rientro del
+resto del file restano com'erano. Se il file non e' JSON valido nemmeno ammettendo
+commenti, non lo tocca e stampa lo snippet da inserire manualmente. Poi riavvia l'editor.
 
 ### Copilot CLI e sessioni agentiche in VS Code
 

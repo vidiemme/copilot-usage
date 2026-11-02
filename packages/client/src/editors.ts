@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { applyEdits, modify, parseTree, type FormattingOptions, type ParseError } from 'jsonc-parser';
 
 const OVERRIDE_KEY = 'github.copilot.advanced.debug.overrideCapiUrl';
 const AUTH_TYPE_KEY = 'github.copilot.advanced.debug.overrideAuthType';
@@ -53,23 +54,44 @@ export type ApplyResult =
   | { status: 'updated'; backup: string | undefined }
   | { status: 'unparsable' };
 
+/** Rientro gia' usato nel file, cosi' le righe aggiunte non stonano (VS Code scrive con i tab). */
+function formattingOf(text: string): FormattingOptions {
+  const indent = /^([ \t]+)"/m.exec(text)?.[1];
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  if (indent?.startsWith('\t')) return { insertSpaces: false, tabSize: 1, eol };
+  return { insertSpaces: true, tabSize: indent?.length ?? 2, eol };
+}
+
 export function applyEditorSettings(editor: Editor, port: number): ApplyResult {
   const file = editor.settingsFile;
-  let current: Record<string, unknown> = {};
+  let text = '';
   let backup: string | undefined;
 
   try {
-    const raw = readFileSync(file, 'utf-8');
-    // `settings.json` ammette commenti e virgole finali: riscriverlo li distruggerebbe.
-    current = raw.trim().length === 0 ? {} : (JSON.parse(raw) as Record<string, unknown>);
-    backup = `${file}.bak`;
-    copyFileSync(file, backup);
+    text = readFileSync(file, 'utf-8');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return { status: 'unparsable' };
   }
 
+  // `settings.json` ammette commenti e virgole finali: si modificano solo le
+  // due chiavi, lasciando intatto il resto del file.
+  if (text.trim().length === 0) text = '{}\n';
+  const errors: ParseError[] = [];
+  const root = parseTree(text, errors, { allowTrailingComma: true });
+  if (errors.length > 0 || root?.type !== 'object') return { status: 'unparsable' };
+
+  if (existsSync(file)) {
+    backup = `${file}.bak`;
+    copyFileSync(file, backup);
+  }
+
+  const formattingOptions = formattingOf(text);
+  for (const [key, value] of Object.entries(editorSnippet(port))) {
+    text = applyEdits(text, modify(text, [key], value, { formattingOptions }));
+  }
+
   mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, `${JSON.stringify({ ...current, ...editorSnippet(port) }, null, 2)}\n`);
+  writeFileSync(file, text.endsWith('\n') ? text : `${text}\n`);
   return { status: 'updated', backup };
 }
 

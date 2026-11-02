@@ -58,15 +58,32 @@ describe('impostazioni degli editor', () => {
     expect(readOverride(target)).toBe('http://127.0.0.1:9001');
   });
 
-  it('non tocca un settings.json con commenti', () => {
+  it('aggiorna un settings.json con commenti e virgole finali senza toccare il resto', () => {
     const target = editor();
     applyEditorSettings(target, 9000);
-    const jsonc = '{\n  // commento\n  "editor.fontSize": 14,\n}\n';
-    writeFileSync(target.settingsFile, jsonc);
+    writeFileSync(
+      target.settingsFile,
+      '{\n\t// commento\n\t"editor.fontSize": 14,\n\t"github.copilot.advanced.debug.overrideCapiUrl": "http://127.0.0.1:9000",\n}\n',
+    );
 
+    expect(applyEditorSettings(target, 9001).status).toBe('updated');
+    expect(readFileSync(target.settingsFile, 'utf-8')).toBe(
+      '{\n\t// commento\n\t"editor.fontSize": 14,\n' +
+        '\t"github.copilot.advanced.debug.overrideCapiUrl": "http://127.0.0.1:9001",\n' +
+        '\t"github.copilot.advanced.debug.overrideAuthType": "token",\n}\n',
+    );
+    expect(readOverride(target)).toBe('http://127.0.0.1:9001');
+  });
+
+  it('crea il file se manca e non tocca un settings.json rotto', () => {
+    const target = editor();
+    expect(applyEditorSettings(target, 9000)).toEqual({ status: 'updated', backup: undefined });
+    expect(readOverride(target)).toBe('http://127.0.0.1:9000');
+
+    const broken = '{\n  "editor.fontSize": 14\n  "editor.tabSize": 2\n';
+    writeFileSync(target.settingsFile, broken);
     expect(applyEditorSettings(target, 9001)).toEqual({ status: 'unparsable' });
-    expect(readFileSync(target.settingsFile, 'utf-8')).toBe(jsonc);
-    expect(readOverride(target)).toBeNull();
+    expect(readFileSync(target.settingsFile, 'utf-8')).toBe(broken);
   });
 
   it('riconosce localhost e 127.0.0.1 sulla porta giusta', () => {

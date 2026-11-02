@@ -353,7 +353,7 @@ function applyEditors(port: number): void {
     const result = applyEditorSettings(editor, port);
     if (result.status === 'unparsable') {
       console.log(
-        `\n${editor.name}: non riesco a modificare ${editor.settingsFile} senza rischiare di rovinarlo (contiene commenti o non e' JSON valido).`,
+        `\n${editor.name}: non riesco a modificare ${editor.settingsFile} senza rischiare di rovinarlo (non e' JSON valido, nemmeno ammettendo commenti).`,
       );
       printEditorSettings(port, editor);
       continue;
