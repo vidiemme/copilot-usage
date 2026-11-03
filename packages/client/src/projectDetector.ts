@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { dirname, sep } from 'node:path';
 import { readRepositoryIdentity, type RepositoryIdentity } from './gitRepository.js';
 
@@ -80,6 +80,29 @@ function startsWithRoot(path: string, root: string): boolean {
   const head = path.slice(0, root.length);
   const same = IS_WINDOWS ? head.toLowerCase() === root.toLowerCase() : head === root;
   return same && path[root.length] === sep;
+}
+
+/** Cartelle di dati applicativi che non ospitano progetti dell'utente. */
+const APP_DATA_DIRECTORIES = new Set(['library', 'appdata']);
+
+/**
+ * Le cartelle nascoste e quelle di dati applicativi appena sotto il root
+ * (`~/.copilot`, `~/.claude`, `~/Library`, `%USERPROFILE%\AppData`)
+ * appartengono agli strumenti: ci vivono i clone di plugin e skill, che una
+ * richiesta cita in abbondanza quando la skill viene caricata.
+ */
+function isToolOwned(path: string, root: string): boolean {
+  const first = path.slice(root.length + 1).split(sep, 1)[0] ?? '';
+  return first.startsWith('.') || APP_DATA_DIRECTORIES.has(first.toLowerCase());
+}
+
+/**
+ * Worktree collegato: `.git` e' un file. E' cosi' che gli agenti isolano il
+ * lavoro su un progetto vero anche sotto le proprie cartelle
+ * (`~/.codex/worktrees`, `~/.cursor/worktrees`), mentre i plugin sono clone pieni.
+ */
+function isLinkedWorktree(directory: string): boolean {
+  return statSync(`${directory}${sep}.git`, { throwIfNoEntry: false })?.isFile() === true;
 }
 
 /**
@@ -194,12 +217,13 @@ export class ProjectDetector {
     if (cached && cached.expiresAt > now) return cached.repository ?? undefined;
 
     const root = this.roots.find((item) => startsWithRoot(candidate, item));
+    const toolOwned = root !== undefined && isToolOwned(candidate, root);
 
     let result: RepositoryIdentity | undefined;
     let directory = candidate;
     while (root && directory.length > root.length) {
       if (this.markers.some((marker) => existsSync(`${directory}${sep}${marker}`))) {
-        result = readRepositoryIdentity(directory);
+        if (!toolOwned || isLinkedWorktree(directory)) result = readRepositoryIdentity(directory);
         break;
       }
       const parent = dirname(directory);

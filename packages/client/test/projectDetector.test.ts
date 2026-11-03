@@ -146,6 +146,36 @@ describe('ProjectDetector', () => {
     expect(detector().detect(request, 's:1')).toBeUndefined();
   });
 
+  it('non attribuisce al repository di una skill installata sotto le cartelle degli strumenti', () => {
+    makeRepo(['.copilot', 'marketplaces', 'skills'], 'https://github.com/mattpocock/skills.git');
+    makeRepo(['Library', 'Caches', 'plugins', 'skills'], 'https://github.com/mattpocock/skills.git');
+    const skill = `${root}/.copilot/marketplaces/skills/skills/tdd`;
+    const request = body({
+      messages: [
+        { role: 'user', content: `${root}/crm-locale/src/app.ts` },
+        {
+          role: 'assistant',
+          content: `${skill}/SKILL.md ${skill}/tests.md ${skill}/mocking.md ${root}/Library/Caches/plugins/skills/a.md`,
+        },
+      ],
+    });
+
+    expect(detector().detect(request, 's:1')?.repository.projectId).toBe('acme/legacy-crm');
+  });
+
+  it('riconosce i worktree degli agenti sotto le cartelle degli strumenti', () => {
+    const main = join(root, 'worktree-main');
+    makeRepo(['worktree-main'], 'git@gitlab.com:acme/agente.git');
+    const worktree = join(root, '.codex', 'worktrees', 'a1b2', 'agente');
+    mkdirSync(join(main, '.git', 'worktrees', 'agente'), { recursive: true });
+    writeFileSync(join(main, '.git', 'worktrees', 'agente', 'commondir'), '../..\n');
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(join(worktree, '.git'), `gitdir: ${join(main, '.git', 'worktrees', 'agente')}\n`);
+
+    const request = body({ text: `${worktree}/src/index.ts` });
+    expect(detector().detect(request, 's:1')?.repository.projectId).toBe('acme/agente');
+  });
+
   it('resta inattivo senza root configurati', () => {
     const instance = new ProjectDetector({
       roots: [],

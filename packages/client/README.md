@@ -192,6 +192,12 @@ disponibile, non dal nome scelto per la cartella di clone:
 | Nessun remote utilizzabile, oppure progetto non Git | Nome normalizzato della cartella |
 
 Sono gestiti anche worktree e submodule Git. La cache path/repository dura 10 minuti.
+
+I path dentro cartelle nascoste o di dati applicativi subito sotto un root
+(`~/.copilot`, `~/.claude`, `~/.cursor`, `~/Library`, `AppData`) non contano:
+li' ci sono i clone di plugin e skill, che quando una skill viene caricata
+verrebbero citati piu' del progetto reale. Fanno eccezione i worktree Git
+(`.git` come file), che gli agenti creano per esempio in `~/.codex/worktrees`.
 L'ID derivato dal remote non include l'host: percorsi uguali su host Git diversi
 possono quindi coincidere.
 
