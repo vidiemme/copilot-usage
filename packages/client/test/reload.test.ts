@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { TokenCounters } from '@vidiemme/copilot-usage-contract';
 import { parseUsageRecord, readCliCalls } from '../src/reload/copilotCli.js';
-import { buildReloadPlan, proxyFirstStart, type RateBook } from '../src/reload/index.js';
+import { buildReloadPlan, proxyFirstStart, singleNestedRepository, type RateBook } from '../src/reload/index.js';
 import { reconstructRounds, selectTier, type RateTier } from '../src/reload/reconstruct.js';
 import { readChatRequests, replaySession } from '../src/reload/vscodeChat.js';
 
@@ -286,5 +286,110 @@ describe('caricamento dello storico', () => {
 
     expect(proxyFirstStart(log)?.getTime()).toBe(1793102554476);
     expect(proxyFirstStart(join(root, 'assente.log'))).toBeUndefined();
+  });
+});
+
+describe('cartella aperta sopra il repository', () => {
+  let base: string;
+
+  beforeAll(() => {
+    base = mkdtempSync(join(tmpdir(), 'nested-'));
+  });
+
+  afterAll(() => {
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  function repo(path: string, remote?: string): string {
+    const directory = join(base, path);
+    mkdirSync(join(directory, '.git'), { recursive: true });
+    writeFileSync(join(directory, '.git', 'config'), remote ? `[remote "origin"]\n\turl = ${remote}\n` : '');
+    return directory;
+  }
+
+  it('trova l\'unico repository fino a due livelli, ignorando cartelle nascoste e dipendenze', () => {
+    const one = repo('redroom/monorepo');
+    repo('redroom/.cache/plugin');
+    repo('redroom/node_modules/pkg');
+    const deep = repo('cliente/apps/web');
+
+    expect(singleNestedRepository(join(base, 'redroom'), ['.git'])).toBe(one);
+    expect(singleNestedRepository(join(base, 'cliente'), ['.git'])).toBe(deep);
+  });
+
+  it('tratta un clone e i suoi worktree come un solo repository', () => {
+    const main = repo('medismart/medismart-service', 'git@gitlab.com:air-liquide/medismart-service.git');
+    const pointer = join(main, '.git', 'worktrees', 'feature-x');
+    mkdirSync(pointer, { recursive: true });
+    writeFileSync(join(pointer, 'commondir'), '../..\n');
+    mkdirSync(join(base, 'medismart', 'feature-x'), { recursive: true });
+    writeFileSync(join(base, 'medismart', 'feature-x', '.git'), `gitdir: ${pointer}\n`);
+    repo('medismart-e-altro/medismart-service', 'git@gitlab.com:air-liquide/medismart-service.git');
+    repo('medismart-e-altro/client-react', 'git@gitlab.com:air-liquide/client-react.git');
+
+    expect(singleNestedRepository(join(base, 'medismart'), ['.git'])).toBeDefined();
+    expect(singleNestedRepository(join(base, 'medismart-e-altro'), ['.git'])).toBeUndefined();
+  });
+
+  it('non sceglie fra piu\' repository, ne\' oltre due livelli', () => {
+    repo('airliquide/medismart-service');
+    repo('airliquide/client-react');
+    repo('profondo/a/b/c');
+
+    expect(singleNestedRepository(join(base, 'airliquide'), ['.git'])).toBeUndefined();
+    expect(singleNestedRepository(join(base, 'profondo'), ['.git'])).toBeUndefined();
+  });
+
+  it('attribuisce le sessioni della cartella contenitore al remote del repository interno', () => {
+    repo('contenitore/monorepo', 'git@gitlab.com:bip/red/redroom/monorepo.git');
+    const call = (id: string, cwd: string) => ({
+      requestId: id,
+      occurredAt: new Date('2026-10-10T08:00:00Z'),
+      cwd,
+      sessionId: 's',
+      model: 'gpt-6-luna',
+      endpoint: null,
+      usage: { inputTokens: 1, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 1 },
+      durationMs: null,
+    });
+
+    const result = buildReloadPlan(
+      { cliCalls: [call('c1', join(base, 'contenitore')), call('c2', join(base, 'airliquide'))], chatRequests: [] },
+      { roots: [base], markers: ['.git'] },
+      'dev-1',
+      undefined,
+    );
+
+    expect(result.events.map((event) => [event.requestId, event.projectId])).toEqual([
+      ['c1', 'bip/red/redroom/monorepo'],
+      ['c2', 'airliquide'],
+    ]);
+  });
+
+  it('non cerca dentro un root di lavoro, anche se contiene un solo repository', () => {
+    const root = join(base, 'solo-root');
+    repo('solo-root/sdk', 'https://github.com/flutter/flutter.git');
+    const result = buildReloadPlan(
+      {
+        cliCalls: [
+          {
+            requestId: 'h1',
+            occurredAt: new Date('2026-10-10T08:00:00Z'),
+            cwd: root,
+            sessionId: 's',
+            model: null,
+            endpoint: null,
+            usage: { inputTokens: 1, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 1 },
+            durationMs: null,
+          },
+        ],
+        chatRequests: [],
+      },
+      { roots: [root], markers: ['.git'] },
+      'dev-1',
+      undefined,
+    );
+
+    expect(result.events.map((event) => event.projectId)).toEqual(['solo-root']);
   });
 });

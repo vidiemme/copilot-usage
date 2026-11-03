@@ -1,5 +1,5 @@
-import { readFileSync } from 'node:fs';
-import { hostname, userInfo } from 'node:os';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { homedir, hostname, userInfo } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import {
   MAX_EVENTS_PER_BATCH,
@@ -121,10 +121,57 @@ function inRange(at: Date, options: ReloadOptions): boolean {
   return (!options.from || at >= options.from) && (!options.to || at < options.to);
 }
 
+/** Livelli di sottocartelle in cui cercare il repository di una cartella che lo contiene. */
+const NESTED_REPOSITORY_DEPTH = 2;
+/** Tetto alle cartelle esaminate: una cartella aperta sulla home non deve costare una scansione del disco. */
+const NESTED_SCAN_LIMIT = 500;
+
+/**
+ * Unico repository dentro una cartella, entro due livelli; `undefined` se non
+ * ce n'e' nessuno o piu' d'uno. Un clone e i suoi worktree sono lo stesso
+ * repository: conta il remote, non quante cartelle hanno `.git`. Le cartelle
+ * nascoste e le dipendenze non contano: li' non vive il progetto su cui si lavora.
+ */
+export function singleNestedRepository(folder: string, markers: string[]): string | undefined {
+  let found: { path: string; projectId: string } | undefined;
+  let level = [folder];
+  let visited = 0;
+
+  for (let depth = 0; depth < NESTED_REPOSITORY_DEPTH && level.length > 0; depth += 1) {
+    const next: string[] = [];
+    for (const directory of level) {
+      let entries;
+      try {
+        entries = readdirSync(directory, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        if ((visited += 1) > NESTED_SCAN_LIMIT) return undefined;
+        const child = join(directory, entry.name);
+        if (markers.some((marker) => existsSync(join(child, marker)))) {
+          const { projectId } = readRepositoryIdentity(child);
+          // Due repository diversi: la cartella e' un contenitore, non si puo' scegliere.
+          if (found && found.projectId !== projectId) return undefined;
+          found ??= { path: child, projectId };
+        } else {
+          next.push(child);
+        }
+      }
+    }
+    level = next;
+  }
+  return found?.path;
+}
+
 /**
  * Collega una cartella di lavoro al suo repository.
  *
- * Una cartella sotto i root che non sta in nessun repository prende comunque
+ * VS Code e' spesso aperto sulla cartella che contiene il clone (`redroom/`
+ * con dentro `monorepo/`): le chat restano legate a quella, e risalendo non si
+ * trova nessun repository. Se dentro ce n'e' uno solo, la chat e' sua. Una
+ * cartella che non porta a nessun repository, o a piu' d'uno, prende
  * un'identita' dal nome: e' lo stesso ripiego del proxy.
  */
 function projectResolver(options: ReloadOptions): (folders: string[]) => RepositoryIdentity | undefined {
@@ -134,10 +181,28 @@ function projectResolver(options: ReloadOptions): (folders: string[]) => Reposit
     stickyTtlMs: 0,
     maxScanBytes: 0,
   });
+  // Molte richieste condividono la stessa cartella: la scansione si fa una volta.
+  const nested = new Map<string, RepositoryIdentity | undefined>();
+  // La home e i root contengono tutto: l'unico clone nei primi livelli (un SDK,
+  // un tool) non dice nulla su cosa si stesse facendo.
+  const containers = new Set([homedir(), ...options.roots].map(comparable));
+  const nestedRepository = (folder: string): RepositoryIdentity | undefined => {
+    if (containers.has(comparable(folder))) return undefined;
+    if (!nested.has(folder)) {
+      const repository = singleNestedRepository(folder, options.markers);
+      nested.set(folder, repository ? readRepositoryIdentity(repository) : undefined);
+    }
+    return nested.get(folder);
+  };
+
   return (folders) => {
     const candidates = folders.filter((folder) => inside(folder, options.roots));
     for (const folder of candidates) {
       const repository = detector.resolve(folder);
+      if (repository) return repository;
+    }
+    for (const folder of candidates) {
+      const repository = nestedRepository(folder);
       if (repository) return repository;
     }
     return candidates[0] ? readRepositoryIdentity(candidates[0]) : undefined;
