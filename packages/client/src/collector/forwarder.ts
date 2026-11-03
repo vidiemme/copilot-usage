@@ -1,5 +1,5 @@
 import { appendFile, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { MAX_EVENTS_PER_BATCH, type UsageEventPayload } from '@vidiemme/copilot-usage-contract';
+import { MAX_EVENTS_PER_BATCH, mergeHydraFusion, type UsageEventPayload } from '@vidiemme/copilot-usage-contract';
 import type { ClientConfig } from '../config.js';
 import { CLIENT_USER_AGENT } from '../version.js';
 
@@ -13,6 +13,24 @@ export interface Logger {
 const MAX_QUEUE_LENGTH = 10_000;
 /** Tetto agli eventi parcheggiati su disco: si tengono i piu' recenti. */
 const MAX_SPOOL_EVENTS = 50_000;
+
+/**
+ * Un aggiornamento del routing rinvia un evento gia' misurato: va al collector
+ * come gli altri, ma non e' una nuova misura per le statistiche del proxy.
+ */
+interface QueuedEvent {
+  event: UsageEventPayload;
+  fusionUpdate: boolean;
+}
+
+/** Nello spool le misure restano eventi semplici, compatibili con i proxy precedenti. */
+interface SpooledFusionUpdate {
+  fusionUpdate: UsageEventPayload;
+}
+
+function spoolLine({ event, fusionUpdate }: QueuedEvent): string {
+  return JSON.stringify(fusionUpdate ? ({ fusionUpdate: event } satisfies SpooledFusionUpdate) : event);
+}
 
 /**
  * Rifiuti che si risolvono senza toccare il payload: credenziali da sistemare,
@@ -79,7 +97,7 @@ export function chunk<T>(items: T[], size: number): T[][] {
  * chiave `requestId` rende i rinvii innocui, perche' il server deduplica.
  */
 export class UsageForwarder {
-  private queue: UsageEventPayload[] = [];
+  private queue: QueuedEvent[] = [];
   private timer: NodeJS.Timeout | undefined;
   private pending: Promise<void> | undefined;
   private dropped = 0;
@@ -119,20 +137,38 @@ export class UsageForwarder {
     this.timer.unref();
   }
 
-  enqueue(event: UsageEventPayload): void {
+  /** Restituisce `false` se l'evento e' stato scartato per coda piena. */
+  enqueue(event: UsageEventPayload): boolean {
     this.counters.recorded += 1;
     this.counters.lastEventAt = new Date().toISOString();
     this.counters.lastEventByClient[clientFamily(event.clientName)] = this.counters.lastEventAt;
-    if (this.queue.length >= MAX_QUEUE_LENGTH) {
-      this.dropped += 1;
-      this.counters.dropped += 1;
-      if (this.dropped % 100 === 1) {
-        this.logger.error({ dropped: this.dropped }, 'coda usage piena, eventi scartati');
-      }
+    if (this.push({ event, fusionUpdate: false })) return true;
+
+    this.dropped += 1;
+    this.counters.dropped += 1;
+    if (this.dropped % 100 === 1) {
+      this.logger.error({ dropped: this.dropped }, 'coda usage piena, eventi scartati');
+    }
+    return false;
+  }
+
+  /** Da chiamare solo per eventi accettati da `enqueue`: il rinvio porta con se' i contatori. */
+  enqueueFusionUpdate(event: UsageEventPayload & { hydraFusion: boolean }): void {
+    const queued = this.queue.find((entry) => entry.event.requestId === event.requestId);
+    if (queued) {
+      queued.event = { ...queued.event, hydraFusion: mergeHydraFusion(queued.event.hydraFusion, event.hydraFusion) };
       return;
     }
-    this.queue.push(event);
+    if (!this.push({ event, fusionUpdate: true })) {
+      this.logger.warn({ requestId: event.requestId }, 'coda usage piena, routing Fusion non inviato');
+    }
+  }
+
+  private push(entry: QueuedEvent): boolean {
+    if (this.queue.length >= MAX_QUEUE_LENGTH) return false;
+    this.queue.push(entry);
     if (this.queue.length >= this.batchSize) void this.flush();
+    return true;
   }
 
   /**
@@ -174,9 +210,11 @@ export class UsageForwarder {
     return { ...this.counters, lastEventByClient: { ...this.counters.lastEventByClient } };
   }
 
-  private async send(events: UsageEventPayload[]): Promise<boolean> {
-    if (events.length === 0) return true;
+  private async send(entries: QueuedEvent[]): Promise<boolean> {
+    if (entries.length === 0) return true;
 
+    const measurements = entries.filter((entry) => !entry.fusionUpdate).length;
+    const events = entries.map((entry) => entry.event);
     let response: Response;
     try {
       response = await fetch(this.config.collectorUrl, {
@@ -192,10 +230,10 @@ export class UsageForwarder {
     }
 
     if (response.ok) {
-      this.counters.delivered += events.length;
+      this.counters.delivered += measurements;
       this.counters.lastDeliveryAt = new Date().toISOString();
       this.counters.lastError = null;
-      await this.logRejected(response);
+      await this.logRejected(response, entries);
       return true;
     }
 
@@ -207,7 +245,7 @@ export class UsageForwarder {
       response.status >= 400 &&
       response.status < 500 &&
       !RETRYABLE_CLIENT_ERRORS.has(response.status);
-    if (permanent) this.counters.dropped += events.length;
+    if (permanent) this.counters.dropped += measurements;
     this.logger.error(
       { status: response.status, events: events.length, permanent },
       permanent ? 'collector ha rifiutato gli eventi' : 'collector non disponibile',
@@ -216,7 +254,7 @@ export class UsageForwarder {
   }
 
   /** Il collector accetta i singoli eventi validi e restituisce gli scartati. */
-  private async logRejected(response: Response): Promise<void> {
+  private async logRejected(response: Response, entries: QueuedEvent[]): Promise<void> {
     let body: unknown;
     try {
       body = await response.json();
@@ -225,7 +263,12 @@ export class UsageForwarder {
     }
     const rejected = (body as { rejected?: unknown } | null)?.rejected;
     if (!Array.isArray(rejected) || rejected.length === 0) return;
-    this.counters.dropped += rejected.length;
+    this.counters.dropped += rejected.filter((item: unknown) => {
+      if (typeof item !== 'object' || item === null || !('index' in item) || typeof item.index !== 'number') {
+        return true;
+      }
+      return !entries[item.index]?.fusionUpdate;
+    }).length;
     this.logger.error({ rejected: rejected.slice(0, 10) }, 'collector ha scartato alcuni eventi');
   }
 
@@ -259,7 +302,7 @@ export class UsageForwarder {
     await rm(this.sendingPath, { force: true });
   }
 
-  private async readEvents(path: string): Promise<UsageEventPayload[]> {
+  private async readEvents(path: string): Promise<QueuedEvent[]> {
     let content: string;
     try {
       content = await readFile(path, 'utf-8');
@@ -267,11 +310,16 @@ export class UsageForwarder {
       return [];
     }
 
-    const events: UsageEventPayload[] = [];
+    const events: QueuedEvent[] = [];
     for (const line of content.split('\n')) {
       if (line.trim().length === 0) continue;
       try {
-        events.push(JSON.parse(line) as UsageEventPayload);
+        const parsed = JSON.parse(line) as UsageEventPayload | SpooledFusionUpdate;
+        events.push(
+          'fusionUpdate' in parsed
+            ? { event: parsed.fusionUpdate, fusionUpdate: true }
+            : { event: parsed, fusionUpdate: false },
+        );
       } catch {
         // Riga troncata da un arresto brusco: si scarta solo quella.
       }
@@ -279,9 +327,9 @@ export class UsageForwarder {
     return events;
   }
 
-  private async spool(events: UsageEventPayload[]): Promise<void> {
+  private async spool(events: QueuedEvent[]): Promise<void> {
     if (events.length === 0) return;
-    const lines = `${events.map((event) => JSON.stringify(event)).join('\n')}\n`;
+    const lines = `${events.map(spoolLine).join('\n')}\n`;
 
     try {
       const size = await stat(this.spoolPath).then(
@@ -308,7 +356,7 @@ export class UsageForwarder {
       { dropped: events.length - kept.length },
       "spool oltre il limite, scartati gli eventi piu' vecchi",
     );
-    await writeFile(this.spoolPath, `${kept.map((event) => JSON.stringify(event)).join('\n')}\n`, {
+    await writeFile(this.spoolPath, `${kept.map(spoolLine).join('\n')}\n`, {
       mode: 0o600,
     });
   }

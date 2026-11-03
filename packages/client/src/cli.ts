@@ -925,6 +925,7 @@ async function commandReload(
       from: flags.from ? parseDate(String(flags.from), false) : undefined,
       to: flags.to ? parseDate(String(flags.to), true) : undefined,
       agents: agentPolicy(flags),
+      copilotHome: config.copilotHome,
     };
   } catch (error) {
     console.error(`${(error as Error).message}\n\nSe e' la prima volta:  npx @vidiemme/copilot-proxy setup`);

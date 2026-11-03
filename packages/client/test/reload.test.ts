@@ -256,6 +256,27 @@ describe('caricamento dello storico', () => {
     expect(result.chatCredits).toBe(40);
   });
 
+  it('propaga il routing delle sessioni CLI e delle chat ai singoli eventi ricaricati', () => {
+    const cli = readCliCalls(state).find((call) => call.requestId === 'g1')!;
+    const chat = readChatRequests([{ editor: 'VS Code', path: storage }])
+      .find((request) => request.requestId === 'r1')!;
+    expect(chat.hydraFusion).toBe(false);
+    const result = buildReloadPlan(
+      { cliCalls: [{ ...cli, hydraFusion: true }], chatRequests: [{ ...chat, hydraFusion: true }] },
+      { roots: [work], markers: ['.git'] },
+      'dev-1',
+      rates,
+    );
+
+    expect(result.events).toHaveLength(3);
+    expect(result.events.every((event) => event.hydraFusion === true)).toBe(true);
+    expect(result.events.map((event) => event.model)).toEqual([
+      'claude-opus-5-5',
+      'claude-opus-5-5',
+      'claude-opus-5.5',
+    ]);
+  });
+
   it('segnala le richieste che non si possono ricostruire invece di caricarle a costo zero', () => {
     const result = plan(rates);
 

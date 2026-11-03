@@ -19,6 +19,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      contract_only:
+        description: 'Pubblica solo il contratto, prima del deploy del collector'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -71,6 +76,7 @@ jobs:
           fi
 
       - name: Pubblica il proxy
+        if: ${{ github.event_name != 'workflow_dispatch' || !inputs.contract_only }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish -w @vidiemme/copilot-proxy

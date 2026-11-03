@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { UsageEventPayload } from '@vidiemme/copilot-usage-contract';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { UsageForwarder } from '../src/collector/forwarder.js';
 import type { ClientConfig } from '../src/config.js';
 
@@ -186,6 +186,45 @@ describe('UsageForwarder', () => {
 
     expect(forwarder.stats()).toMatchObject({ recorded: 2, delivered: 2, dropped: 0, lastError: null });
     expect(forwarder.stats().lastEventAt).not.toBeNull();
+  });
+
+  it('unisce il routing all\'evento ancora in coda senza contare una seconda misura', async () => {
+    const forwarder = makeForwarder();
+    forwarder.enqueue(makeEvent('a'));
+    forwarder.enqueueFusionUpdate({ ...makeEvent('a'), hydraFusion: true });
+    forwarder.enqueueFusionUpdate({ ...makeEvent('a'), hydraFusion: false });
+    await forwarder.flush();
+
+    expect(received).toEqual([expect.objectContaining({ requestId: 'a', hydraFusion: true })]);
+    expect(forwarder.stats()).toMatchObject({ recorded: 1, delivered: 1, dropped: 0 });
+  });
+
+  it('ritenta un arricchimento separato senza alterare i contatori delle misure', async () => {
+    const forwarder = makeForwarder();
+    forwarder.enqueue(makeEvent('a'));
+    await forwarder.flush();
+    status = 503;
+    forwarder.enqueueFusionUpdate({ ...makeEvent('a'), hydraFusion: true });
+    await forwarder.flush();
+    expect(spoolLines()).toHaveLength(1);
+    expect(JSON.parse(spoolLines()[0]!)).toMatchObject({ fusionUpdate: { requestId: 'a', hydraFusion: true } });
+
+    status = 202;
+    await forwarder.flush();
+    expect(received).toHaveLength(2);
+    expect(received[1]).toEqual({ ...makeEvent('a'), hydraFusion: true });
+    expect(forwarder.stats()).toMatchObject({ recorded: 1, delivered: 1, dropped: 0 });
+  });
+
+  it('segnala lo scarto per coda piena, cosi\' il routing di quell\'evento non viene inviato', () => {
+    const forwarder = makeForwarder();
+    vi.spyOn(forwarder, 'flush').mockResolvedValue();
+    for (let index = 0; index < 10_000; index += 1) {
+      expect(forwarder.enqueue(makeEvent(`e-${index}`))).toBe(true);
+    }
+
+    expect(forwarder.enqueue(makeEvent('scartato'))).toBe(false);
+    expect(forwarder.stats()).toMatchObject({ recorded: 10_001, dropped: 1 });
   });
 
   it("ricorda l'ultimo evento per famiglia di client", () => {

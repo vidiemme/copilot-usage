@@ -5,7 +5,9 @@ import { UsageForwarder } from './collector/forwarder.js';
 import type { ClientConfig } from './config.js';
 import { createProxyHandler } from './proxy/handler.js';
 import { ProjectDetector } from './projectDetector.js';
+import { defaultSessionStateDir } from './reload/copilotCli.js';
 import type { UpdateStatus } from './selfUpdate.js';
+import { FusionCorrelator } from './usage/fusionCorrelator.js';
 import { CLIENT_VERSION } from './version.js';
 
 export interface App {
@@ -17,6 +19,8 @@ export interface App {
 
 export interface AppOptions {
   updateStatus?: () => UpdateStatus;
+  fusionSessionStateDir?: string;
+  fusionPollIntervalMs?: number;
 }
 
 function createServer(config: ClientConfig): FastifyInstance {
@@ -67,6 +71,12 @@ export async function buildApp(config: ClientConfig, options: AppOptions = {}): 
 
   const forwarder = new UsageForwarder(config, server.log);
   forwarder.start();
+  const fusion = new FusionCorrelator(
+    options.fusionSessionStateDir ?? defaultSessionStateDir(config.copilotHome),
+    (event) => forwarder.enqueueFusionUpdate(event),
+    server.log,
+    options.fusionPollIntervalMs,
+  );
 
   const detector = new ProjectDetector({
     roots: config.workspaceRoots,
@@ -99,7 +109,7 @@ export async function buildApp(config: ClientConfig, options: AppOptions = {}): 
   server.route({
     method: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'HEAD'],
     url: '/*',
-    handler: createProxyHandler(config, forwarder, detector),
+    handler: createProxyHandler(config, forwarder, detector, fusion),
   });
 
   return {
@@ -107,6 +117,7 @@ export async function buildApp(config: ClientConfig, options: AppOptions = {}): 
     idleSince: () => (inFlight > 0 ? undefined : lastActivityAt),
     close: async () => {
       await server.close();
+      await fusion.close();
       await forwarder.close();
     },
   };

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { homedir } from 'node:os';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { loadConfig, type ConfigSource } from '../src/config.js';
 import { DEFAULT_COLLECTOR_URL } from '../src/defaults.js';
+import { defaultSessionStateDir } from '../src/reload/copilotCli.js';
 
 // Sulla postazione del developer l'unico valore da procurarsi e' il token:
 // tutto il resto arriva dai default del pacchetto.
@@ -40,6 +41,11 @@ describe('loadConfig', () => {
     const config = loadConfig({ ...MINIMAL, HOST: '   ', LOG_LEVEL: '' });
     expect(config.host).toBe('127.0.0.1');
     expect(config.logLevel).toBe('info');
+  });
+
+  it('usa la cartella Copilot configurata anche per leggere le sessioni', () => {
+    const config = loadConfig({ ...MINIMAL, COPILOT_HOME: '/tmp/copilot-custom' });
+    expect(defaultSessionStateDir(config.copilotHome)).toBe(join('/tmp/copilot-custom', 'session-state'));
   });
 
   it('taglia le barre finali dello upstream per non produrre URL doppi', () => {

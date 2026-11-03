@@ -161,6 +161,31 @@ Le risposte senza contatori, per esempio le chiamate a `/models`, non generano e
 Se uno stream si interrompe vengono registrati i contatori disponibili: il risultato
 puo' essere parziale.
 
+### Hydra Fusion
+
+L'evento contiene `hydraFusion`: `true` indica Fusion, `false` una selezione diretta
+riconoscibile e `null` significa che il routing non e' determinabile. Il campo `model`
+continua a indicare il modello fisico e non basta, da solo, a stabilire se Fusion l'abbia
+scelto.
+
+Per Copilot CLI e le sessioni agentiche in VS Code il proxy legge localmente i record
+`session.usage_record` e li abbina all'`x-request-id` dell'upstream tramite
+`serviceRequestId`. Il blocco `usage.fusion.syntheticModel` identifica Fusion; in assenza
+del blocco, una selezione esplicita di un modello fisico identico a quello della chiamata
+indica una selezione diretta. Un identificatore sintetico Fusion riconosciuto nella richiesta
+viene rilevato anche senza log. Per la chat VS Code ricaricata dallo storico, `true` deriva
+dal modello Fusion selezionato; `false` richiede anche un modello risolto corrispondente.
+
+Il record CLI puo' arrivare dopo la risposta: per un massimo di 15 secondi il proxy legge
+le righe nuove dei log recenti (alla prima lettura, o dopo una crescita superiore a 4 MiB,
+solo gli ultimi 4 MiB) e, se necessario, invia un aggiornamento con lo stesso
+`requestId`. Il collector aggiorna il solo flag, senza ricontare token o costi; per questo va
+aggiornato prima dei proxy, altrimenti scarta l'aggiornamento come duplicato. Un evento
+scartato per coda piena non riceve aggiornamenti. Mancanza di
+ID, log, permessi, metadati o modello selezionato affidabile lascia `null`; la chat VS Code
+dal vivo e gli altri harness non vengono dedotti dal solo modello fisico. Il proxy non
+salva ne' trasmette i contenuti dei log, soltanto il flag.
+
 ## Attribuzione al progetto e al developer
 
 ![Attribuzione del progetto: prima i segnali espliciti, poi i path dei repository locali, poi il progetto della sessione e infine unassigned.](https://raw.githubusercontent.com/vidiemme/copilot-usage/main/packages/client/docs/diagrams/attribution.png)
@@ -443,8 +468,10 @@ Il comando si puo' rilanciare: le chiavi degli eventi sono deterministiche e il
 collector deduplica. **Non deduplica pero' le chat di VS Code con il traffico
 gia' misurato dal proxy**, perche' non hanno un id in comune: se il proxy era
 attivo nel periodo scelto, `reload` lo segnala dal log del proxy e suggerisce
-il `--to` da usare. Per Copilot CLI la chiave e' l'id della richiesta GitHub,
-lo stesso che usa il proxy.
+il `--to` da usare. Per Copilot CLI, quando il log contiene `serviceRequestId`, la
+chiave e' l'id della richiesta GitHub, lo stesso che usa il proxy: un rinvio puo'
+aggiungere il flag Fusion all'evento esistente. Senza quell'id si usa una chiave
+locale, che non deduplica il traffico gia' misurato.
 
 ### File e variabili d'ambiente
 
@@ -467,6 +494,7 @@ generico di tutte le variabili d'ambiente nel file.
 | `PROJECT_STICKY_TTL_MS` | `1800000` (30 minuti). |
 | `DEVELOPER_ID_SALT` | Salt aziendale incluso nel pacchetto; non e' una credenziale segreta. |
 | `DEVELOPER_NAME`, `DEVELOPER_EMAIL` | Facoltativi; il nome abilita l'invio dell'identita' al collector. |
+| `COPILOT_HOME` | `~/.copilot`; la stessa cartella usata dalla CLI per `session-state`. Configurala anche nel file del proxy se il servizio automatico non eredita la variabile. |
 | `ATTRIBUTION_TOKENS` | `{}`; oggetto JSON token -> `{ "projectId": "...", "developerId": "..." }`. Contiene credenziali: non versionarlo. |
 | `FLUSH_INTERVAL_MS`, `FLUSH_MAX_BATCH` | `5000`, `100` (massimo 500 eventi per batch). |
 | `COLLECTOR_TIMEOUT_MS` | `10000`. |
@@ -497,6 +525,7 @@ letto in memoria per inoltro, ispezione e attribuzione. Al collector arrivano:
 - identita' del repository rilevato: host, gruppi, nome e URL del remote;
 - pseudonimo/ID developer e sua fonte, user agent e ID sessione se disponibile;
 - endpoint, modello, contatori di token, durata e indicazione streaming;
+- flag `hydraFusion` quando il routing e' rilevabile;
 - nome ed email facoltativi, negli header di invio, salvo `--anonymous`.
 
 Non vengono inviati al collector il token Copilot, i path di lavoro rilevati o il
@@ -526,7 +555,9 @@ La consegna e' **best effort, non senza perdite**:
 - spool fino a 50.000 eventi, conservando i piu' recenti;
 - gli altri errori HTTP 4xx sono definitivi e causano lo scarto del batch;
 - gli eventi rifiutati singolarmente dal collector vengono segnalati nei log;
-- un arresto improvviso puo' perdere gli eventi ancora soltanto in memoria.
+- un arresto improvviso puo' perdere gli eventi ancora soltanto in memoria;
+- gli aggiornamenti del flag Fusion seguono la stessa coda e lo stesso spool, ma non
+  contano come nuovi eventi in `recorded`, `delivered` e `dropped`.
 
 Tieni sotto controllo spool, errori e contatore `dropped`. Il proxy non ha
 autenticazione locale propria: non esporre `HOST=0.0.0.0` senza protezioni adeguate.

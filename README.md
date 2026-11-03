@@ -98,6 +98,12 @@ Completions e OpenAI Responses. Per le Chat Completions in streaming aggiunge
 `stream_options: { include_usage: true }` **solo se il client non l'ha gia' specificato**:
 senza, l'upstream non restituirebbe contatori. Prompt e risposte non vengono mai salvati.
 
+**Hydra Fusion.** Quando il routing e' rilevabile, l'evento conserva anche `hydraFusion`:
+`true` per Fusion, `false` per una selezione diretta riconoscibile e `null` se non e'
+determinabile. Il modello fisico resta invariato. Richiede il collector aggiornato (contratto
+0.1.4 e migrazione `010_hydra_fusion`), da distribuire prima dei proxy. Segnali e limiti sono nel
+[README del client](packages/client/README.md#hydra-fusion).
+
 **Attribuzione del progetto.** Prima i segnali espliciti, poi i path:
 
 | Priorita' | Segnale | Sorgente |
@@ -212,8 +218,10 @@ aggiornano quando vogliono: le regole sono in
 [Sorgente HTML del diagramma](packages/client/docs/diagrams/release.html)
 
 ```bash
-npm version X.Y.Z -w @vidiemme/copilot-proxy   # e il contratto, solo se e' cambiato
-git tag vX.Y.Z && git push --tags
+npm version X.Y.Z -w @vidiemme/copilot-proxy --no-git-tag-version
+# Aggiorna anche il contratto se e' cambiato, poi committa e spingi su GitHub.
+git tag vX.Y.Z
+git push <remote-github> vX.Y.Z
 ```
 
 [`publish.yml`](.github/workflows/publish.yml) esegue typecheck, test e build, verifica che il
@@ -221,8 +229,19 @@ tag corrisponda alla versione del proxy, pubblica il contratto se la sua version
 sul registry e poi il proxy. [`ci.yml`](.github/workflows/ci.yml) esegue le stesse verifiche,
 piu' `smoke` e `verify-detection`, a ogni push su `main` e su ogni pull request.
 
-Il contratto va per primo perche' il client ne importa a runtime `MAX_EVENTS_PER_BATCH` e
-`totalInputTokens`. Ha un ciclo di versioni suo, non legato al tag. Entrambi i pacchetti hanno
+Se il collector deve usare una nuova versione del contratto, dopo aver spinto le modifiche su
+`main` di GitHub pubblica prima solo il contratto:
+
+```bash
+gh workflow run publish.yml --repo vidiemme/copilot-usage --ref main -f contract_only=true
+```
+
+Attendi il successo del workflow, aggiorna e distribuisci il collector con le sue migrazioni,
+quindi crea e spingi il tag del proxy. Il workflow avviato dal tag pubblica il proxy e salta
+il contratto gia' presente.
+
+Il contratto va per primo perche' il client ne importa a runtime `MAX_EVENTS_PER_BATCH`,
+`totalInputTokens` e `mergeHydraFusion`. Ha un ciclo di versioni suo, non legato al tag. Entrambi i pacchetti hanno
 `publishConfig.access: public`, altrimenti npm tratterebbe lo scope come privato.
 
 L'autenticazione usa **trusted publishing**: GitHub Actions si autentica su npm via OIDC, con

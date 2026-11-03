@@ -83,6 +83,7 @@ manda batch da 100.
   "sessionId": "c1a5...",
   "endpoint": "/chat/completions",
   "model": "gpt-5.4",
+  "hydraFusion": true,
   "usage": {
     "inputTokens": 1830,
     "cachedInputTokens": 12400,
@@ -111,6 +112,7 @@ valido, rende l'evento inutilizzabile; un campo descrittivo troppo lungo viene t
 | `sessionId` | string o `null` | no | Finestra o conversazione. Troncato a 200. |
 | `endpoint` | string | si' | Path dell'API chiamata, senza prefissi di attribuzione. Troncato a 500. |
 | `model` | string o `null` | no | Modello dichiarato dalla risposta, o dalla richiesta. Troncato a 200. |
+| `hydraFusion` | boolean o `null` | no | `true` per Fusion, `false` per una selezione diretta riconoscibile, `null` se sconosciuto o assente. Un valore non booleano rifiuta l'evento. |
 | `usage` | oggetto | si' | Quattro contatori; vedi sotto. |
 | `billedNanoAiu` | number o `null` | no | Addebito GitHub della richiesta (`copilot_usage.total_nano_aiu`), in nano-AIU: 1e9 = 1 AI credit = $0.01. Un valore non finito, negativo o oltre 1e14 diventa `null` senza scartare l'evento. |
 | `streamed` | boolean | no | `true` solo se esplicitamente `true`. |
@@ -211,6 +213,7 @@ decide cosa e' accettabile.
 | `InvalidEventError` | classe | Errore di validazione, con il motivo nel messaggio. |
 | `MAX_EVENTS_PER_BATCH` | costante | `500`: guida per il client, tetto per il server. |
 | `totalInputTokens(usage)` | funzione | Somma dei tre contatori di input. |
+| `mergeHydraFusion(current, next)` | funzione | Combina due valori di `hydraFusion` della stessa richiesta: `true` prevale, `null` non cancella un valore noto. |
 
 Per accettare un batch parziale, come fa il collector di riferimento, si valida evento per
 evento con `parseUsageEvent` e si raccolgono i rifiutati:
@@ -240,8 +243,8 @@ raw.forEach((item, index) => {
 ## Versionamento e compatibilita'
 
 Il contratto ha un ciclo di versioni suo, indipendente dal client: si incrementa solo quando
-cambia. Viene pubblicato prima del client, che a runtime ne importa `MAX_EVENTS_PER_BATCH` e
-`totalInputTokens`.
+cambia. Viene pubblicato prima del client, che a runtime ne importa `MAX_EVENTS_PER_BATCH`,
+`totalInputTokens` e `mergeHydraFusion`.
 
 I proxy installati sulle postazioni si aggiornano quando vogliono, quindi ogni modifica deve
 restare retrocompatibile con loro:

@@ -34,6 +34,8 @@ export interface ClientConfig {
   /** Nome mostrato in dashboard al posto dello pseudonimo; assente = anonimo. */
   developerName: string | undefined;
   developerEmail: string | undefined;
+  /** Cartella usata da Copilot CLI per le sessioni locali. */
+  copilotHome?: string | undefined;
   flushIntervalMs: number;
   flushMaxBatch: number;
   /** Installa da solo le patch quando gira come servizio. */
@@ -117,6 +119,7 @@ export function loadConfig(source: ConfigSource = process.env): ClientConfig {
     developerIdSalt,
     developerName: read('DEVELOPER_NAME'),
     developerEmail: read('DEVELOPER_EMAIL'),
+    copilotHome: read('COPILOT_HOME'),
     flushIntervalMs: intOption('FLUSH_INTERVAL_MS', 5000),
     flushMaxBatch: intOption('FLUSH_MAX_BATCH', 100),
     autoUpdate: !/^(0|false|no|off)$/i.test(optional('AUTO_UPDATE', 'true')),

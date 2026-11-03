@@ -38,6 +38,19 @@ export function totalInputTokens(usage: TokenCounters): number {
   return usage.inputTokens + usage.cachedInputTokens + usage.cacheWriteTokens;
 }
 
+/**
+ * Combina due osservazioni del routing della stessa richiesta: una prova di
+ * Fusion prevale su una selezione diretta, e l'assenza di informazione non
+ * cancella un valore noto.
+ */
+export function mergeHydraFusion(
+  current: boolean | null | undefined,
+  next: boolean | null | undefined,
+): boolean | null {
+  if (current === true || next === true) return true;
+  return current ?? next ?? null;
+}
+
 export interface UsageEventPayload {
   /** Chiave di deduplica: rende i rinvii sicuri. */
   requestId: string;
@@ -51,6 +64,8 @@ export interface UsageEventPayload {
   sessionId: string | null;
   endpoint: string;
   model: string | null;
+  /** `null` se la sorgente non permette di stabilire se la chiamata e' passata da Fusion. */
+  hydraFusion?: boolean | null;
   usage: TokenCounters;
   /**
    * Addebito di GitHub per la richiesta (`copilot_usage.total_nano_aiu`):
@@ -97,6 +112,12 @@ function requiredString(value: unknown, field: string, max = MAX_ID_LENGTH): str
 
 function optionalString(value: unknown, max = MAX_TEXT_LENGTH): string | null {
   return typeof value === 'string' && value.length > 0 ? value.slice(0, max) : null;
+}
+
+function optionalBoolean(value: unknown, field: string): boolean | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'boolean') throw new InvalidEventError(`${field} non booleano`);
+  return value;
 }
 
 function counter(value: unknown, field: string): number {
@@ -166,6 +187,7 @@ export function parseUsageEvent(input: unknown): UsageEventPayload {
     sessionId: optionalString(raw.sessionId, MAX_ID_LENGTH),
     endpoint: requiredString(raw.endpoint, 'endpoint', MAX_TEXT_LENGTH),
     model: optionalString(raw.model, MAX_ID_LENGTH),
+    hydraFusion: optionalBoolean(raw.hydraFusion, 'hydraFusion'),
     usage: {
       inputTokens: counter(usage.inputTokens, 'usage.inputTokens'),
       cachedInputTokens: counter(usage.cachedInputTokens, 'usage.cachedInputTokens'),

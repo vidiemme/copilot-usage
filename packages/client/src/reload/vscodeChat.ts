@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { knownEditors } from '../editors.js';
+import { fusionFromChatSelection } from '../usage/fusion.js';
 
 /** Una richiesta di Copilot Chat come la conserva l'editor. */
 export interface ChatRequest {
@@ -12,6 +13,7 @@ export interface ChatRequest {
   folders: string[];
   sessionId: string;
   model: string | null;
+  hydraFusion?: boolean | null;
   promptTokens: number | null;
   completionTokens: number | null;
   credits: number | null;
@@ -160,6 +162,7 @@ function chatRequest(raw: unknown, sessionId: string, folders: string[], editor:
     folders,
     sessionId,
     model: resolved ?? selected ?? null,
+    hydraFusion: fusionFromChatSelection(selected, resolved),
     promptTokens: asNumber(request.promptTokens) ?? asNumber(metadata.promptTokens),
     completionTokens: asNumber(request.completionTokens) ?? asNumber(metadata.outputTokens),
     credits: asNumber(request.copilotCredits),

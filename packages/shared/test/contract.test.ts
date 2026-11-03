@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   InvalidEventError,
   MAX_EVENTS_PER_BATCH,
+  mergeHydraFusion,
   parseIngestBody,
   parseUsageEvent,
   totalInputTokens,
@@ -56,6 +57,22 @@ describe('parseUsageEvent', () => {
     expect(event.repository).toBeNull();
     expect(event.model).toBeNull();
     expect(event.durationMs).toBeNull();
+  });
+
+  it('conserva il flag Fusion e distingue i client senza informazione', () => {
+    expect(parseUsageEvent(validEvent({ hydraFusion: true })).hydraFusion).toBe(true);
+    expect(parseUsageEvent(validEvent({ hydraFusion: false })).hydraFusion).toBe(false);
+    expect(parseUsageEvent(validEvent({ hydraFusion: null })).hydraFusion).toBeNull();
+    expect(parseUsageEvent(validEvent()).hydraFusion).toBeNull();
+    expect(() => parseUsageEvent(validEvent({ hydraFusion: 'false' }))).toThrow(/hydraFusion/);
+  });
+
+  it('combina le osservazioni del routing senza perdere Fusion', () => {
+    expect(mergeHydraFusion(false, true)).toBe(true);
+    expect(mergeHydraFusion(true, false)).toBe(true);
+    expect(mergeHydraFusion(false, null)).toBe(false);
+    expect(mergeHydraFusion(undefined, false)).toBe(false);
+    expect(mergeHydraFusion(null, undefined)).toBeNull();
   });
 
   it('rifiuta gli eventi senza chiave di deduplica', () => {

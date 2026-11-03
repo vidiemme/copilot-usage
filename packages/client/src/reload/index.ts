@@ -13,7 +13,7 @@ import { configDir } from '../paths.js';
 import { ProjectDetector } from '../projectDetector.js';
 import { gitIdentity } from '../setupHelpers.js';
 import { readAgentCalls, type AgentCall } from './agents.js';
-import { readCliCalls, type CliCall } from './copilotCli.js';
+import { defaultSessionStateDir, readCliCalls, type CliCall } from './copilotCli.js';
 import { reconstructRounds, type RateTier } from './reconstruct.js';
 import { readChatRequests, type ChatRequest } from './vscodeChat.js';
 
@@ -39,6 +39,7 @@ export interface ReloadOptions {
   /** Esclusivo. */
   to?: Date | undefined;
   agents?: AgentPolicy | undefined;
+  copilotHome?: string | undefined;
 }
 
 export interface RateBook {
@@ -259,6 +260,7 @@ export function buildReloadPlan(
       sessionId: call.sessionId,
       endpoint: call.endpoint ?? '/reload/copilot-cli',
       model: call.model,
+      hydraFusion: call.hydraFusion ?? null,
       usage: call.usage,
       durationMs: call.durationMs,
     });
@@ -309,6 +311,7 @@ export function buildReloadPlan(
         sessionId: request.sessionId,
         endpoint: '/reload/vscode-chat',
         model: request.model,
+        hydraFusion: request.hydraFusion ?? null,
         usage,
         durationMs: null,
       });
@@ -344,6 +347,7 @@ export function buildReloadPlan(
       sessionId: call.sessionId,
       endpoint: `/reload/${call.tool}`,
       model,
+      hydraFusion: null,
       usage: call.usage,
       durationMs: call.durationMs,
     });
@@ -369,7 +373,7 @@ function copilotModel(call: AgentCall, policy: AgentPolicy): string | null | und
 /** Legge le sessioni salvate sulla macchina. */
 export function readLocalSessions(options: ReloadOptions): ReloadInputs {
   return {
-    cliCalls: readCliCalls(undefined, options.from),
+    cliCalls: readCliCalls(defaultSessionStateDir(options.copilotHome), options.from),
     chatRequests: readChatRequests(undefined, options.from),
     agentCalls: readAgentCalls(options.from),
   };

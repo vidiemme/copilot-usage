@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { PassThrough, Readable } from 'node:stream';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { Agent, request as undiciRequest } from 'undici';
-import type { RepositoryIdentity } from '@vidiemme/copilot-usage-contract';
+import type { RepositoryIdentity, UsageEventPayload } from '@vidiemme/copilot-usage-contract';
 import { resolveAttribution } from '../attribution.js';
 import type { ClientConfig } from '../config.js';
-import type { UsageForwarder } from '../collector/forwarder.js';
+import { clientFamily, type UsageForwarder } from '../collector/forwarder.js';
 import { ProjectDetector } from '../projectDetector.js';
 import { isStreamingResponse, UsageCollector } from '../usage/collector.js';
+import { isHydraFusionModel } from '../usage/fusion.js';
+import type { FusionCorrelator } from '../usage/fusionCorrelator.js';
 import { buildDownstreamHeaders, buildUpstreamHeaders } from './headers.js';
 import { inspectRequest } from './inspectRequest.js';
 
@@ -44,6 +46,7 @@ export function createProxyHandler(
   config: ClientConfig,
   forwarder: UsageForwarder,
   detector?: ProjectDetector,
+  fusion?: FusionCorrelator,
 ) {
   const upstream = new URL(config.upstreamBaseUrl);
 
@@ -120,8 +123,9 @@ export function createProxyHandler(
     const streaming = isStreamingResponse(contentType);
     const collector = new UsageCollector(streaming);
 
+    const serviceRequestId = responseHeaders.get('x-request-id');
     const requestId =
-      responseHeaders.get('x-request-id') ??
+      serviceRequestId ??
       (request.headers['x-request-id'] as string | undefined) ??
       randomUUID();
 
@@ -135,7 +139,7 @@ export function createProxyHandler(
       // (es. /models, health check). Non va registrata.
       if (!parsed) return;
 
-      forwarder.enqueue({
+      const event: UsageEventPayload = {
         requestId,
         occurredAt: new Date(startedAt).toISOString(),
         developerId: attribution.developerId,
@@ -147,6 +151,7 @@ export function createProxyHandler(
         sessionId: facts.sessionId ?? null,
         endpoint: pathname,
         model: parsed.model ?? facts.model ?? null,
+        hydraFusion: isHydraFusionModel(facts.model) ? true : null,
         usage: {
           inputTokens: parsed.inputTokens,
           cachedInputTokens: parsed.cachedInputTokens,
@@ -156,7 +161,11 @@ export function createProxyHandler(
         billedNanoAiu: parsed.billedNanoAiu ?? null,
         streamed: streaming,
         durationMs: Date.now() - startedAt,
-      });
+      };
+      const accepted = forwarder.enqueue(event);
+      if (accepted && serviceRequestId && clientFamily(attribution.clientName).toLowerCase() === 'copilot') {
+        fusion?.track(event);
+      }
     };
 
     reply.code(upstreamResponse.statusCode);
