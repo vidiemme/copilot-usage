@@ -147,6 +147,11 @@ Per un rollout non interattivo (MDM, script) il token si passa con `COLLECTOR_TO
 nell'ambiente; non esiste un'opzione `--token`, di proposito. Installazione, aggiornamento e
 diagnostica sono nel [README del client](packages/client/README.md#installazione-rapida).
 
+Il servizio aggiorna automaticamente anche minor e major stabili. Le versioni dalla
+0.8.0 alla 0.10.1 arrivano alla nuova regola tramite patch di transizione; quelle fino
+alla 0.7.2 richiedono un aggiornamento iniziale, anche via MDM. Prerequisiti e tempi
+sono descritti in [Aggiornamento automatico](packages/client/README.md#aggiornamento-automatico).
+
 Per verificare il rollout:
 
 ```bash
@@ -230,6 +235,11 @@ git push <remote-github> vX.Y.Z
 tag corrisponda alla versione del proxy, pubblica il contratto se la sua versione non e' gia'
 sul registry e poi il proxy. [`ci.yml`](.github/workflows/ci.yml) esegue le stesse verifiche,
 piu' `smoke` e `verify-detection`, a ogni push su `main` e su ogni pull request.
+
+Per una patch di transizione su una vecchia minor, imposta nel suo `package.json`
+un `publishConfig.tag` dedicato, ad esempio `legacy-0.8`: il workflow lo passa
+esplicitamente a npm, cosi' la patch non sposta il dist-tag `latest`. Verifica
+entrambi i tag sul registry.
 
 Se il collector deve usare una nuova versione del contratto, dopo aver spinto le modifiche su
 `main` di GitHub pubblica prima solo il contratto:

@@ -94,7 +94,7 @@ Opzioni di setup:
   --collector-url <url>     endpoint di raccolta, se diverso da quello aziendale
   --salt <valore>           salt degli pseudonimi, se diverso da quello aziendale
   --upstream <url>          endpoint Copilot (default https://api.githubcopilot.com)
-  --no-auto-update          non installare da solo le patch (--auto-update le riattiva)
+  --no-auto-update          non installare da solo gli aggiornamenti (--auto-update li riattiva)
   --force                   rifa' il setup partendo dalla configurazione esistente
                             (token compreso: per cambiare porta basta --force --port)
 
@@ -768,7 +768,7 @@ function describeUpdate(health: ProxyHealth): string {
   if (!update) return `non previsto dalla ${health.version ?? 'versione'} in esecuzione`;
   if (!update.enabled) return `no, ${update.reason ?? 'motivo sconosciuto'}`;
   if (update.pending) return `installata la ${update.pending}, riparte appena il proxy e' inattivo`;
-  return `attivo per le patch${update.lastCheckAt ? `, ultimo controllo ${update.lastCheckAt}` : ''}`;
+  return `attivo per le versioni stabili${update.lastCheckAt ? `, ultimo controllo ${update.lastCheckAt}` : ''}`;
 }
 
 /**

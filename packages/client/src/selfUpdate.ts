@@ -42,13 +42,12 @@ function compareVersions(a: Version, b: Version): number {
 }
 
 /**
- * Patch piu' recente della stessa minor, pubblicata da almeno `UPDATE_MIN_AGE_MS`.
+ * Versione stabile piu' recente, pubblicata da almeno `UPDATE_MIN_AGE_MS`.
  *
- * Un cambio di minor puo' richiedere di rilanciare il setup e resta manuale.
  * Il limite su `latest` lascia il rollback a chi pubblica: riportare indietro
  * il dist-tag ferma l'aggiornamento verso la versione ritirata.
  */
-export function pickPatchUpdate(packument: Packument, current: string, now = Date.now()): string | undefined {
+export function pickUpdate(packument: Packument, current: string, now = Date.now()): string | undefined {
   const installed = parseVersion(current);
   const latest = parseVersion(packument['dist-tags']?.latest);
   if (!installed || !latest) return undefined;
@@ -57,8 +56,7 @@ export function pickPatchUpdate(packument: Packument, current: string, now = Dat
   let bestName: string | undefined;
   for (const [name, manifest] of Object.entries(packument.versions ?? {})) {
     const version = parseVersion(name);
-    if (!version || version[0] !== installed[0] || version[1] !== installed[1]) continue;
-    if (version[2] <= installed[2] || compareVersions(version, latest) > 0) continue;
+    if (!version || compareVersions(version, installed) <= 0 || compareVersions(version, latest) > 0) continue;
     if (manifest.deprecated) continue;
     const published = Date.parse(packument.time?.[name] ?? '');
     if (!Number.isFinite(published) || now - published < UPDATE_MIN_AGE_MS) continue;
@@ -134,7 +132,8 @@ function resolveLink(file: string): string | undefined {
 
 function installedVersion(packageDir: string): string | undefined {
   try {
-    return (JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf-8')) as { version?: string }).version;
+    const manifest = JSON.parse(readFileSync(path.join(packageDir, 'package.json'), 'utf-8')) as { version?: unknown };
+    return typeof manifest.version === 'string' && manifest.version ? manifest.version : undefined;
   } catch {
     return undefined;
   }
@@ -159,8 +158,14 @@ export interface SelfUpdaterOptions {
   restart: () => void;
 }
 
+interface SelfUpdaterDependencies {
+  target?: InstallTarget | { reason: string };
+  fetchPackument?: () => Promise<Packument>;
+  install?: (target: InstallTarget, version: string) => Promise<void>;
+}
+
 /**
- * Installa da solo le patch e poi termina, lasciando a launchd, systemd o al
+ * Installa da solo gli aggiornamenti e poi termina, lasciando a launchd, systemd o al
  * supervisore Windows il riavvio: il servizio punta al percorso del pacchetto
  * globale, che resta lo stesso fra una versione e l'altra.
  */
@@ -168,13 +173,18 @@ export class SelfUpdater {
   private readonly target: InstallTarget | { reason: string };
   private timer: NodeJS.Timeout | undefined;
   private checking = false;
+  private closed = false;
   private state: UpdateStatus;
   private log: FastifyBaseLogger | undefined;
+  private readonly fetchPackument: () => Promise<Packument>;
+  private readonly install: (target: InstallTarget, version: string) => Promise<void>;
 
-  constructor(private readonly options: SelfUpdaterOptions) {
+  constructor(private readonly options: SelfUpdaterOptions, dependencies: SelfUpdaterDependencies = {}) {
     this.target = options.disabledReason
       ? { reason: options.disabledReason }
-      : installTarget(fileURLToPath(new URL('cli.js', import.meta.url)), process.execPath);
+      : dependencies.target ?? installTarget(fileURLToPath(new URL('cli.js', import.meta.url)), process.execPath);
+    this.fetchPackument = dependencies.fetchPackument ?? fetchPackument;
+    this.install = dependencies.install ?? installUpdate;
     this.state = 'reason' in this.target ? { enabled: false, reason: this.target.reason } : { enabled: true };
   }
 
@@ -189,25 +199,39 @@ export class SelfUpdater {
   }
 
   close(): void {
+    this.closed = true;
     clearTimeout(this.timer);
     this.timer = undefined;
   }
 
   private schedule(delay: number): void {
+    if (this.closed) return;
     this.timer = setTimeout(() => void this.check(), delay);
     this.timer.unref();
   }
 
   private async check(): Promise<void> {
-    if (this.checking || 'reason' in this.target) return;
+    if (this.closed || this.checking || 'reason' in this.target) return;
     this.checking = true;
     const target = this.target;
     try {
       this.state.lastCheckAt = new Date().toISOString();
-      const version = pickPatchUpdate(await fetchPackument(), CLIENT_VERSION);
+      const installed = installedVersion(target.packageDir);
+      if (!installed) throw new Error(`impossibile leggere la versione installata in ${target.packageDir}`);
+      if (installed !== CLIENT_VERSION) {
+        this.state.pending = installed;
+        this.state.lastError = undefined;
+        this.log?.info({ version: installed }, "versione gia' installata: riparto appena il proxy e' inattivo");
+        this.waitForIdle();
+        return;
+      }
+
+      const version = pickUpdate(await this.fetchPackument(), CLIENT_VERSION);
+      if (this.closed) return;
       if (version) {
         this.log?.info({ version }, 'aggiornamento automatico: installo la nuova versione');
-        await install(target, version);
+        await this.install(target, version);
+        if (this.closed) return;
         this.state.pending = version;
         this.state.lastError = undefined;
         this.log?.info({ version }, 'aggiornamento installato: riparto appena il proxy e\' inattivo');
@@ -216,7 +240,7 @@ export class SelfUpdater {
       }
       this.state.lastError = undefined;
     } catch (error) {
-      this.state.lastError = (error as Error).message;
+      this.state.lastError = error instanceof Error ? error.message : String(error);
       this.log?.warn({ err: error }, 'aggiornamento automatico non riuscito');
     } finally {
       this.checking = false;
@@ -225,6 +249,7 @@ export class SelfUpdater {
   }
 
   private waitForIdle(): void {
+    if (this.closed) return;
     const since = this.options.idleSince();
     if (since !== undefined && Date.now() - since >= QUIET_MS) {
       this.options.restart();
@@ -244,11 +269,21 @@ async function fetchPackument(): Promise<Packument> {
   return (await response.json()) as Packument;
 }
 
-async function install(target: InstallTarget, version: string): Promise<void> {
+export async function installUpdate(target: InstallTarget, version: string): Promise<void> {
   const nodeDir = path.dirname(process.execPath);
   await promisify(execFile)(
     process.execPath,
-    [target.npmCli, 'install', '--global', '--prefix', target.prefix, '--no-audit', '--no-fund', `${CLIENT_PACKAGE}@${version}`],
+    [
+      target.npmCli,
+      'install',
+      '--global',
+      '--prefix',
+      target.prefix,
+      '--engine-strict',
+      '--no-audit',
+      '--no-fund',
+      `${CLIENT_PACKAGE}@${version}`,
+    ],
     {
       timeout: INSTALL_TIMEOUT_MS,
       windowsHide: true,
