@@ -40,8 +40,8 @@ contratto sul filo: l'unica cosa che le due parti condividono.
 Il taglio non e' arbitrario:
 
 - **il listino sta sul server**, perche' aggiornarlo non deve richiedere di ridistribuire n
-  postazioni, e perche' un client vecchio o manomesso non deve poter dichiarare quanto ha
-  speso: manda solo contatori grezzi;
+  postazioni: il client manda contatori grezzi e, quando GitHub lo scrive nella risposta,
+  l'addebito della richiesta, che il server preferisce al listino;
 - **il database sta dietro il server**, perche' le sue credenziali non devono finire su n
   macchine;
 - **il traffico Copilot non passa dal cloud**: il proxy parla direttamente con

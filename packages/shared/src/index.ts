@@ -3,9 +3,10 @@
  *
  * Il client misura e attribuisce; il server prezza e conserva. Il confine e'
  * volutamente povero: passano solo contatori e identificatori, mai prompt,
- * completion o credenziali. Il costo non e' nel payload perche' il listino sta
- * sul server: un client vecchio non deve poter scrivere prezzi sbagliati, ne'
- * un client manomesso poter dichiarare quanto ha speso.
+ * completion o credenziali. Il client non applica listini: un client vecchio
+ * non deve poter scrivere prezzi sbagliati. L'unico importo che attraversa il
+ * confine e' l'addebito dichiarato da GitHub nella risposta, riportato tale e
+ * quale (`billedNanoAiu`); quando manca il server prezza i token col listino.
  */
 
 export interface RepositoryIdentity {
@@ -51,6 +52,12 @@ export interface UsageEventPayload {
   endpoint: string;
   model: string | null;
   usage: TokenCounters;
+  /**
+   * Addebito di GitHub per la richiesta (`copilot_usage.total_nano_aiu`):
+   * 1e9 nano-AIU = 1 AI credit. Assente sui client che non lo leggono e sulle
+   * risposte che non lo riportano.
+   */
+  billedNanoAiu?: number | null;
   streamed: boolean;
   durationMs: number | null;
 }
@@ -67,6 +74,10 @@ const MAX_TEXT_LENGTH = 500;
 const MAX_GROUPS = 20;
 /** Un contatore oltre questa soglia e' certamente un errore, non un consumo reale. */
 const MAX_TOKENS = 1_000_000_000;
+/** 1e9 nano-AIU = 1 AI credit. */
+export const NANO_AIU_PER_CREDIT = 1_000_000_000;
+/** 1e14 nano-AIU = 100.000 crediti ($1.000) per una sola richiesta: oltre e' un errore. */
+const MAX_NANO_AIU = 100_000_000_000_000;
 
 export class InvalidEventError extends Error {}
 
@@ -97,6 +108,16 @@ function counter(value: unknown, field: string): number {
     throw new InvalidEventError(`${field} fuori intervallo`);
   }
   return rounded;
+}
+
+/**
+ * L'addebito e' un'informazione in piu', non la misura: se e' malformato si
+ * scarta il solo addebito e l'evento resta prezzabile dai token.
+ */
+function billedNanoAiu(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const rounded = Math.round(value);
+  return rounded >= 0 && rounded <= MAX_NANO_AIU ? rounded : null;
 }
 
 function timestamp(value: unknown): string {
@@ -151,6 +172,7 @@ export function parseUsageEvent(input: unknown): UsageEventPayload {
       cacheWriteTokens: counter(usage.cacheWriteTokens, 'usage.cacheWriteTokens'),
       outputTokens: counter(usage.outputTokens, 'usage.outputTokens'),
     },
+    billedNanoAiu: billedNanoAiu(raw.billedNanoAiu),
     streamed: raw.streamed === true,
     durationMs:
       typeof raw.durationMs === 'number' && Number.isFinite(raw.durationMs)

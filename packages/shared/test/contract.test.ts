@@ -114,6 +114,20 @@ describe('parseUsageEvent', () => {
     expect(event.repository?.groups).toHaveLength(20);
     expect(event.repository?.groups.every((g) => typeof g === 'string')).toBe(true);
   });
+
+  it("conserva l'addebito dichiarato da GitHub", () => {
+    expect(parseUsageEvent(validEvent({ billedNanoAiu: 361_427_500 })).billedNanoAiu).toBe(361_427_500);
+    expect(parseUsageEvent(validEvent()).billedNanoAiu).toBeNull();
+  });
+
+  // Un addebito malformato non deve far perdere la misura dei token.
+  it("scarta un addebito non valido senza rifiutare l'evento", () => {
+    for (const billedNanoAiu of [-1, '500', Number.NaN, 1e20]) {
+      const event = parseUsageEvent(validEvent({ billedNanoAiu }));
+      expect(event.billedNanoAiu).toBeNull();
+      expect(event.usage.inputTokens).toBe(1000);
+    }
+  });
 });
 
 describe('parseIngestBody', () => {

@@ -153,6 +153,7 @@ export function createProxyHandler(
           cacheWriteTokens: parsed.cacheWriteTokens,
           outputTokens: parsed.outputTokens,
         },
+        billedNanoAiu: parsed.billedNanoAiu ?? null,
         streamed: streaming,
         durationMs: Date.now() - startedAt,
       });

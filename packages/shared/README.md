@@ -6,9 +6,10 @@ Contratto fra il client di misurazione ([`@vidiemme/copilot-proxy`](https://www.
 e il servizio di raccolta che conserva i consumi di token di GitHub Copilot.
 
 Il client misura e attribuisce; il server prezza e conserva. Il confine e' volutamente povero:
-passano solo contatori e identificatori, mai prompt, completion o credenziali. Il costo **non**
-fa parte del payload, perche' il listino sta sul server: un client vecchio non deve poter
-scrivere prezzi sbagliati, ne' un client manomesso poter dichiarare quanto ha speso.
+passano solo contatori e identificatori, mai prompt, completion o credenziali. Il client non
+applica prezzi, perche' il listino sta sul server: un client vecchio non deve poter scrivere
+prezzi sbagliati. L'unico importo che attraversa il confine e' `billedNanoAiu`, l'addebito che
+GitHub stesso scrive nella risposta e che il client rilancia senza calcolarlo.
 
 Questo README e' la **specifica del protocollo**: e' il riferimento per chi implementa un
 collector compatibile o un client alternativo. Il pacchetto contiene i tipi e la validazione
@@ -88,6 +89,7 @@ manda batch da 100.
     "cacheWriteTokens": 0,
     "outputTokens": 412
   },
+  "billedNanoAiu": 21233000000,
   "streamed": true,
   "durationMs": 4210
 }
@@ -110,6 +112,7 @@ valido, rende l'evento inutilizzabile; un campo descrittivo troppo lungo viene t
 | `endpoint` | string | si' | Path dell'API chiamata, senza prefissi di attribuzione. Troncato a 500. |
 | `model` | string o `null` | no | Modello dichiarato dalla risposta, o dalla richiesta. Troncato a 200. |
 | `usage` | oggetto | si' | Quattro contatori; vedi sotto. |
+| `billedNanoAiu` | number o `null` | no | Addebito GitHub della richiesta (`copilot_usage.total_nano_aiu`), in nano-AIU: 1e9 = 1 AI credit = $0.01. Un valore non finito, negativo o oltre 1e14 diventa `null` senza scartare l'evento. |
 | `streamed` | boolean | no | `true` solo se esplicitamente `true`. |
 | `durationMs` | number o `null` | no | Arrotondato per difetto, mai negativo. |
 
@@ -188,6 +191,12 @@ La validazione e' **asimmetrica** di proposito: tronca i campi descrittivi invec
 cosi' un client con uno user-agent anomalo non fa perdere la misura, e rifiuta solo cio' che
 renderebbe il record insensato o inutile come chiave. Valida un evento alla volta, cosi' un
 evento malformato non costa gli altri del batch.
+
+`billedNanoAiu` e' la cifra fatturata, non una stima: GitHub vi applica fasce long context e
+scritture in cache anche quando l'`usage` della risposta non le riporta (la Chat Completions
+API, per esempio, non dichiara le cache write di Claude). Un collector dovrebbe preferirlo al
+proprio listino quando c'e', e ricadere sul listino quando manca (proxy vecchi, upstream
+diversi da GitHub).
 
 Il confine di validazione e' il server, non il client: il client misura e consegna, il server
 decide cosa e' accettabile.

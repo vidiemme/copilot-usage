@@ -1,7 +1,32 @@
+import { findCopilotUsage, type CopilotBilling } from './copilotUsage.js';
 import { AnthropicUsageAccumulator, parseAnthropicResponse } from './parseAnthropic.js';
 import { OpenAIUsageAccumulator, parseOpenAIResponse } from './parseOpenAI.js';
 import { SseParser } from './sse.js';
-import type { ParsedUsage } from './types.js';
+import { EMPTY_USAGE, isUsageEmpty, type ParsedUsage } from './types.js';
+
+/**
+ * Unisce l'`usage` del protocollo con l'addebito GitHub.
+ *
+ * Quando GitHub elenca i token addebitati, quei contatori prevalgono: sono gli
+ * stessi su cui ha calcolato l'importo, e sono gli unici che distinguono le
+ * scritture in cache su `/chat/completions`.
+ */
+export function withBilling(
+  parsed: ParsedUsage | undefined,
+  billing: CopilotBilling | undefined,
+): ParsedUsage | undefined {
+  if (!billing) return parsed;
+  const counters = billing.tokens && !isUsageEmpty(billing.tokens) ? billing.tokens : (parsed ?? EMPTY_USAGE);
+  const model = parsed?.model ?? billing.model;
+  return {
+    inputTokens: counters.inputTokens,
+    cachedInputTokens: counters.cachedInputTokens,
+    cacheWriteTokens: counters.cacheWriteTokens,
+    outputTokens: counters.outputTokens,
+    ...(model ? { model } : {}),
+    billedNanoAiu: billing.totalNanoAiu,
+  };
+}
 
 /**
  * Raccoglitore di usage indipendente dal dialetto upstream.
@@ -15,6 +40,7 @@ import type { ParsedUsage } from './types.js';
 export class UsageCollector {
   private readonly anthropic = new AnthropicUsageAccumulator();
   private readonly openai = new OpenAIUsageAccumulator();
+  private billing: CopilotBilling | undefined;
   private readonly sse: SseParser;
   private nonStreamChunks: Uint8Array[] = [];
   private nonStreamBytes = 0;
@@ -26,6 +52,8 @@ export class UsageCollector {
     this.sse = new SseParser((payload) => {
       this.anthropic.handleEvent(payload);
       this.openai.handleEvent(payload);
+      // L'importo e' cumulativo per la richiesta: vale l'ultimo riportato.
+      this.billing = findCopilotUsage(payload) ?? this.billing;
     });
   }
 
@@ -42,7 +70,7 @@ export class UsageCollector {
   finish(): ParsedUsage | undefined {
     if (this.streaming) {
       this.sse.end();
-      return this.anthropic.result() ?? this.openai.result();
+      return withBilling(this.anthropic.result() ?? this.openai.result(), this.billing);
     }
 
     if (this.nonStreamChunks.length === 0) return undefined;
@@ -54,8 +82,21 @@ export class UsageCollector {
     } finally {
       this.nonStreamChunks = [];
     }
-    return parseAnthropicResponse(body) ?? parseOpenAIResponse(body);
+    return withBilling(parseNonStreaming(body), findCopilotUsage(body));
   }
+}
+
+/**
+ * Il parser Anthropic accetta qualsiasi `usage` e su un corpo OpenAI darebbe
+ * zero token: il dialetto si riconosce dal tipo del messaggio o dai campi di
+ * cache propri di Anthropic.
+ */
+function parseNonStreaming(body: unknown): ParsedUsage | undefined {
+  const root = typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : undefined;
+  const usage = typeof root?.usage === 'object' && root.usage !== null ? (root.usage as Record<string, unknown>) : {};
+  const anthropic =
+    root?.type === 'message' || 'cache_read_input_tokens' in usage || 'cache_creation_input_tokens' in usage;
+  return anthropic ? parseAnthropicResponse(body) : parseOpenAIResponse(body);
 }
 
 /** Euristica: la risposta e' uno stream SSE? */

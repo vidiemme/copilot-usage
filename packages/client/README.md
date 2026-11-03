@@ -122,8 +122,10 @@ incollare segreti nei comandi, nella cronologia della shell o nei file versionat
 2. Il proxy determina progetto e developer e inoltra la richiesta all'upstream,
    per default `https://api.githubcopilot.com`.
 3. La risposta viene inoltrata al client mentre un parser estrae l'usage.
-4. I contatori normalizzati vengono accodati e inviati al collector in batch.
-   Il collector, non il proxy, applica prezzi, deduplicazione e persistenza.
+4. I contatori normalizzati vengono accodati e inviati al collector in batch,
+   insieme all'addebito che GitHub dichiara in `copilot_usage.total_nano_aiu`.
+   Il proxy non calcola prezzi: il collector usa l'addebito quando c'e', altrimenti
+   applica il listino, e si occupa di deduplicazione e persistenza.
 
 Il token Copilot e la conversazione vanno all'upstream, **non al collector**.
 Il proxy non effettua login o rinnovo delle credenziali Copilot: se ne occupa

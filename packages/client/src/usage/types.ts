@@ -19,6 +19,8 @@ export { totalInputTokens };
 export interface ParsedUsage extends TokenUsage {
   /** Id modello dichiarato dalla risposta upstream, se presente. */
   model?: string;
+  /** Addebito GitHub della richiesta (`copilot_usage.total_nano_aiu`), se riportato. */
+  billedNanoAiu?: number;
 }
 
 export const EMPTY_USAGE: TokenUsage = {
