@@ -38,7 +38,7 @@ export interface ClientConfig {
   copilotHome?: string | undefined;
   flushIntervalMs: number;
   flushMaxBatch: number;
-  /** Installa da solo le patch quando gira come servizio. */
+  /** Installa da solo le versioni stabili quando gira come servizio. */
   autoUpdate: boolean;
 }
 
