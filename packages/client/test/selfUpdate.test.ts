@@ -51,7 +51,9 @@ describe('scelta della versione', () => {
   });
 });
 
-describe('destinazione dell\'installazione', () => {
+// Il prefisso simulato e' quello POSIX (symlink, chmod, `lib/node_modules`):
+// su Windows i percorsi temporanei con `\` non sono leggibili come POSIX.
+describe.skipIf(process.platform === 'win32')('destinazione dell\'installazione', () => {
   let dir: string;
 
   beforeEach(() => {
