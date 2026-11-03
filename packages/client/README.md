@@ -169,8 +169,10 @@ continua a indicare il modello fisico e non basta, da solo, a stabilire se Fusio
 scelto.
 
 Per Copilot CLI e le sessioni agentiche in VS Code il proxy legge localmente i record
-`session.usage_record` e li abbina all'`x-request-id` dell'upstream tramite
-`serviceRequestId`. Il blocco `usage.fusion.syntheticModel` identifica Fusion; in assenza
+`session.usage_record` e li abbina all'header upstream `x-copilot-service-request-id`
+tramite `serviceRequestId`, usato anche come `requestId` dell'evento. Se l'header Copilot
+manca, usa `x-request-id`; per gli altri client la precedenza non cambia.
+Il blocco `usage.fusion.syntheticModel` identifica Fusion; in assenza
 del blocco, una selezione esplicita di un modello fisico identico a quello della chiamata
 indica una selezione diretta. Un identificatore sintetico Fusion riconosciuto nella richiesta
 viene rilevato anche senza log. Per la chat VS Code ricaricata dallo storico, `true` deriva
@@ -469,9 +471,13 @@ collector deduplica. **Non deduplica pero' le chat di VS Code con il traffico
 gia' misurato dal proxy**, perche' non hanno un id in comune: se il proxy era
 attivo nel periodo scelto, `reload` lo segnala dal log del proxy e suggerisce
 il `--to` da usare. Per Copilot CLI, quando il log contiene `serviceRequestId`, la
-chiave e' l'id della richiesta GitHub, lo stesso che usa il proxy: un rinvio puo'
-aggiungere il flag Fusion all'evento esistente. Senza quell'id si usa una chiave
-locale, che non deduplica il traffico gia' misurato.
+chiave coincide con quella usata dal proxy quando l'upstream fornisce
+`x-copilot-service-request-id`: un rinvio puo' aggiungere il flag Fusion all'evento
+esistente. Se l'header manca, o per eventi misurati prima di questa correzione quando
+i due header differivano, le chiavi potrebbero non coincidere: ricaricare il periodo
+puo' duplicare le richieste gia' misurate. Se il log di avvio e' disponibile, `reload`
+avverte quando il periodo CLI si sovrappone al proxy. Senza `serviceRequestId` si usa
+una chiave locale, che non deduplica il traffico gia' misurato.
 
 ### File e variabili d'ambiente
 

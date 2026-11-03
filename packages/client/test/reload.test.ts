@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { TokenCounters } from '@vidiemme/copilot-usage-contract';
 import { parseUsageRecord, readCliCalls } from '../src/reload/copilotCli.js';
-import { buildReloadPlan, proxyFirstStart, singleNestedRepository, type RateBook } from '../src/reload/index.js';
+import { buildReloadPlan, hasCliProxyOverlap, proxyFirstStart, singleNestedRepository, type RateBook } from '../src/reload/index.js';
 import { reconstructRounds, selectTier, type RateTier } from '../src/reload/reconstruct.js';
 import { readChatRequests, replaySession } from '../src/reload/vscodeChat.js';
 
@@ -307,6 +307,15 @@ describe('caricamento dello storico', () => {
 
     expect(proxyFirstStart(log)?.getTime()).toBe(1793102554476);
     expect(proxyFirstStart(join(root, 'assente.log'))).toBeUndefined();
+  });
+
+  it('segnala solo le chiamate CLI nel periodo gia misurato dal proxy', () => {
+    const events = plan(rates).events;
+
+    expect(hasCliProxyOverlap(events, undefined)).toBe(false);
+    expect(hasCliProxyOverlap(events, new Date('2026-10-10T08:00:00Z'))).toBe(true);
+    expect(hasCliProxyOverlap(events, new Date('2026-10-10T08:00:01Z'))).toBe(false);
+    expect(hasCliProxyOverlap(events.filter((event) => event.requestId !== 'g1'), new Date('2026-10-01'))).toBe(false);
   });
 });
 

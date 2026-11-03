@@ -123,7 +123,11 @@ export function createProxyHandler(
     const streaming = isStreamingResponse(contentType);
     const collector = new UsageCollector(streaming);
 
-    const serviceRequestId = responseHeaders.get('x-request-id');
+    const copilotCli = clientFamily(attribution.clientName).toLowerCase() === 'copilot';
+    const upstreamRequestId = responseHeaders.get('x-request-id')?.trim() || null;
+    const serviceRequestId = copilotCli
+      ? responseHeaders.get('x-copilot-service-request-id')?.trim() || upstreamRequestId
+      : upstreamRequestId;
     const requestId =
       serviceRequestId ??
       (request.headers['x-request-id'] as string | undefined) ??
@@ -163,7 +167,7 @@ export function createProxyHandler(
         durationMs: Date.now() - startedAt,
       };
       const accepted = forwarder.enqueue(event);
-      if (accepted && serviceRequestId && clientFamily(attribution.clientName).toLowerCase() === 'copilot') {
+      if (accepted && serviceRequestId && copilotCli) {
         fusion?.track(event);
       }
     };

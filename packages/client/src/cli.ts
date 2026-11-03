@@ -47,6 +47,7 @@ import {
   CLIENT_NAMES,
   developerIdFor,
   fetchRates,
+  hasCliProxyOverlap,
   proxyFirstStart,
   readLocalSessions,
   sendEvents,
@@ -961,6 +962,13 @@ async function commandReload(
       `\nATTENZIONE: il proxy misura questa postazione dal ${proxySince.toLocaleString('it-IT')}.` +
         `\nLe chat di VS Code da allora sono probabilmente gia' nel collector e verrebbero contate due volte.` +
         `\nPer escluderle: --to ${day} (o il giorno prima, se quel giorno il proxy non era ancora attivo).`,
+    );
+  }
+  if (hasCliProxyOverlap(plan.events, proxySince)) {
+    console.log(
+      '\nATTENZIONE: alcune chiamate Copilot CLI ricadono nel periodo misurato dal proxy.' +
+        '\nSe misurate prima della correzione degli ID o senza l\'header Copilot, ricaricarle puo\' duplicarle nel collector.' +
+        '\nVerifica il periodo prima di inviarle: lo storico non viene riclassificato automaticamente.',
     );
   }
 

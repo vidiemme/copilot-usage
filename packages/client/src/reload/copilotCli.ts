@@ -6,7 +6,7 @@ import { fusionFromCliUsage } from '../usage/fusion.js';
 
 /** Una chiamata al modello registrata da Copilot CLI o da una sessione agentica in VS Code. */
 export interface CliCall {
-  /** `serviceRequestId` di GitHub quando c'e': lo stesso che il proxy usa come chiave. */
+  /** `serviceRequestId` di GitHub quando c'e': corrisponde all'header Copilot del proxy. */
   requestId: string;
   occurredAt: Date;
   cwd: string;

@@ -14,6 +14,7 @@ let collector: Server;
 let app: App;
 let proxyUrl: string;
 let upstreamBodies: Record<string, unknown>[];
+let upstreamExtraHeaders: Record<string, string> = {};
 let delivered: UsageEventPayload[];
 
 function readBody(req: IncomingMessage): Promise<string> {
@@ -62,6 +63,7 @@ beforeAll(async () => {
       'content-type': 'text/event-stream',
     };
     if (body.omitUpstreamRequestId !== true) headers['x-request-id'] = `up-${upstreamBodies.length}`;
+    Object.assign(headers, upstreamExtraHeaders);
     res.writeHead(200, headers);
     res.end(STREAMS[req.url ?? ''] ?? '');
   });
@@ -100,6 +102,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   upstreamBodies = [];
+  upstreamExtraHeaders = {};
   delivered = [];
 });
 
@@ -118,8 +121,12 @@ async function post(path: string, body: Record<string, unknown>): Promise<string
   return text;
 }
 
-async function postCli(body: Record<string, unknown>, extraHeaders: Record<string, string> = {}): Promise<string> {
-  const response = await fetch(`${proxyUrl}/chat/completions`, {
+async function postCli(
+  body: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {},
+  path = '/chat/completions',
+): Promise<string> {
+  const response = await fetch(`${proxyUrl}${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'user-agent': 'copilot/1.0', ...extraHeaders },
     body: JSON.stringify(body),
@@ -130,6 +137,25 @@ async function postCli(body: Record<string, unknown>, extraHeaders: Record<strin
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   return text;
+}
+
+function createFusionSession(sessionId: string): string {
+  const session = join(dir, 'custom-home', 'session-state', sessionId);
+  mkdirSync(session, { recursive: true });
+  const file = join(session, 'events.jsonl');
+  writeFileSync(file, `${JSON.stringify({ type: 'session.start', data: { selectedModel: 'hydrafusion' } })}\n`);
+  return file;
+}
+
+async function recordFusionUsage(file: string, serviceRequestId: string, model: string): Promise<void> {
+  appendFileSync(file, `${JSON.stringify({
+    type: 'session.usage_record',
+    timestamp: new Date().toISOString(),
+    data: { usage: { serviceRequestId, model, fusion: { syntheticModel: 'hydrafusion' } } },
+  })}\n`);
+  for (let attempt = 0; attempt < 150 && delivered.length < 2; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe('proxy end-to-end', () => {
@@ -178,23 +204,13 @@ describe('proxy end-to-end', () => {
     const before = (await (await fetch(`${proxyUrl}/_health`)).json()) as {
       usage: { recorded: number; delivered: number };
     };
-    const session = join(dir, 'custom-home', 'session-state', 'cli-1');
-    mkdirSync(session, { recursive: true });
-    const file = join(session, 'events.jsonl');
-    writeFileSync(file, `${JSON.stringify({ type: 'session.start', data: { selectedModel: 'hydrafusion' } })}\n`);
+    const file = createFusionSession('cli-1');
 
     const text = await postCli({ model: 'gpt-5.4', stream: true });
     expect(text).toBe(STREAMS['/chat/completions']);
     expect(delivered[0]!.hydraFusion).toBeNull();
 
-    appendFileSync(file, `${JSON.stringify({
-      type: 'session.usage_record',
-      timestamp: new Date().toISOString(),
-      data: { usage: { serviceRequestId: 'up-1', model: 'gpt-5.4', fusion: { syntheticModel: 'hydrafusion' } } },
-    })}\n`);
-    for (let attempt = 0; attempt < 150 && delivered.length < 2; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
+    await recordFusionUsage(file, 'up-1', 'gpt-5.4');
 
     expect(delivered).toHaveLength(2);
     expect(delivered[1]).toMatchObject({ requestId: 'up-1', model: 'gpt-5.4', hydraFusion: true });
@@ -204,6 +220,52 @@ describe('proxy end-to-end', () => {
     };
     expect(after.usage.recorded).toBe(before.usage.recorded + 1);
     expect(after.usage.delivered).toBe(before.usage.delivered + 1);
+  });
+
+  it('correla la CLI usando il service request id quando differisce da x-request-id', async () => {
+    const before = (await (await fetch(`${proxyUrl}/_health`)).json()) as {
+      usage: { recorded: number; delivered: number };
+    };
+    const file = createFusionSession('cli-service-id');
+    upstreamExtraHeaders['x-copilot-service-request-id'] = 'service-1';
+
+    await postCli({ model: 'gpt-6-sol', stream: true }, {}, '/responses');
+    await recordFusionUsage(file, 'service-1', 'gpt-6-sol');
+
+    expect(delivered).toHaveLength(2);
+    expect(delivered[0]).toMatchObject({ requestId: 'service-1', hydraFusion: null });
+    expect(delivered[1]).toMatchObject({ requestId: 'service-1', hydraFusion: true });
+    expect(delivered[1]!.usage).toEqual(delivered[0]!.usage);
+    const after = (await (await fetch(`${proxyUrl}/_health`)).json()) as {
+      usage: { recorded: number; delivered: number };
+    };
+    expect(after.usage.recorded).toBe(before.usage.recorded + 1);
+    expect(after.usage.delivered).toBe(before.usage.delivered + 1);
+  });
+
+  it('usa il service request id della CLI anche senza x-request-id', async () => {
+    const file = createFusionSession('cli-service-only');
+    upstreamExtraHeaders['x-copilot-service-request-id'] = 'service-only';
+
+    await postCli({ model: 'gpt-6-sol', stream: true, omitUpstreamRequestId: true }, {}, '/responses');
+    await recordFusionUsage(file, 'service-only', 'gpt-6-sol');
+
+    expect(delivered).toHaveLength(2);
+    expect(delivered[0]).toMatchObject({ requestId: 'service-only', hydraFusion: null });
+    expect(delivered[1]).toMatchObject({ requestId: 'service-only', hydraFusion: true });
+  });
+
+  it('ripiega su x-request-id se il service request id della CLI e vuoto', async () => {
+    upstreamExtraHeaders['x-copilot-service-request-id'] = '';
+    upstreamExtraHeaders['x-request-id'] = 'legacy-empty';
+    await postCli({ model: 'gpt-6-sol', stream: true }, {}, '/responses');
+    expect(delivered).toEqual([expect.objectContaining({ requestId: 'legacy-empty', hydraFusion: null })]);
+  });
+
+  it('mantiene x-request-id per i client diversi dalla CLI', async () => {
+    upstreamExtraHeaders['x-copilot-service-request-id'] = 'service-other-client';
+    await post('/responses', { model: 'gpt-6-sol', stream: true });
+    expect(delivered).toEqual([expect.objectContaining({ requestId: 'up-1' })]);
   });
 
   it('riconosce il modello sintetico richiesto anche se la risposta nomina un modello fisico', async () => {

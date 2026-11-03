@@ -474,6 +474,7 @@ export function proxyFirstStart(logFile = join(configDir(), 'proxy.log')): Date 
   } catch {
     return undefined;
   }
+
   for (const line of content.split('\n')) {
     if (!line.includes('Server listening')) continue;
     try {
@@ -484,4 +485,10 @@ export function proxyFirstStart(logFile = join(configDir(), 'proxy.log')): Date 
     }
   }
   return undefined;
+}
+
+export function hasCliProxyOverlap(events: UsageEventPayload[], proxySince: Date | undefined): boolean {
+  return proxySince !== undefined && events.some(
+    (event) => event.clientName === CLIENT_NAMES['copilot-cli'] && Date.parse(event.occurredAt) >= proxySince.getTime(),
+  );
 }

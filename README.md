@@ -102,7 +102,9 @@ senza, l'upstream non restituirebbe contatori. Prompt e risposte non vengono mai
 `true` per Fusion, `false` per una selezione diretta riconoscibile e `null` se non e'
 determinabile. Il modello fisico resta invariato. Richiede il collector aggiornato (contratto
 0.1.4 e migrazione `010_hydra_fusion`), da distribuire prima dei proxy. Segnali e limiti sono nel
-[README del client](packages/client/README.md#hydra-fusion).
+[README del client](packages/client/README.md#hydra-fusion). Gli eventi precedenti alla correzione
+degli identificativi non vengono riclassificati automaticamente; ricaricarli potrebbe duplicare
+richieste gia' misurate.
 
 **Attribuzione del progetto.** Prima i segnali espliciti, poi i path:
 
