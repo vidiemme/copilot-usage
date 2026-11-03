@@ -73,4 +73,6 @@ jobs:
       - name: Pubblica il proxy
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish -w @vidiemme/copilot-proxy
+        run: |
+          tag=$(node -p "require('./packages/client/package.json').publishConfig?.tag ?? 'latest'")
+          npm publish -w @vidiemme/copilot-proxy --tag "$tag"

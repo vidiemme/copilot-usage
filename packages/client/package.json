@@ -1,6 +1,6 @@
 {
   "name": "@vidiemme/copilot-proxy",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "type": "module",
   "description": "Proxy locale: misura il consumo di token di GitHub Copilot e lo attribuisce al progetto",
   "license": "MIT",
@@ -23,7 +23,8 @@
     "dist"
   ],
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "legacy-0.9"
   },
   "engines": {
     "node": ">=22.19"

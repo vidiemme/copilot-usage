@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { UsageEventPayload } from '@vidiemme/copilot-usage-contract';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { buildApp, type App } from '../src/server.js';
 
@@ -15,6 +15,7 @@ let app: App;
 let proxyUrl: string;
 let upstreamBodies: Record<string, unknown>[];
 let delivered: UsageEventPayload[];
+let finishStream: (() => void) | undefined;
 
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve) => {
@@ -56,11 +57,17 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'proxy-e2e-'));
 
   upstream = createServer(async (req, res) => {
-    upstreamBodies.push(JSON.parse(await readBody(req)) as Record<string, unknown>);
+    const body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+    upstreamBodies.push(body);
     res.writeHead(200, {
       'content-type': 'text/event-stream',
       'x-request-id': `up-${upstreamBodies.length}`,
     });
+    if (body.holdStream === true) {
+      res.write(': keep-alive\n\n');
+      finishStream = () => res.end(STREAMS[req.url ?? ''] ?? '');
+      return;
+    }
     res.end(STREAMS[req.url ?? ''] ?? '');
   });
   collector = createServer(async (req, res) => {
@@ -97,6 +104,7 @@ afterAll(async () => {
 beforeEach(() => {
   upstreamBodies = [];
   delivered = [];
+  finishStream = undefined;
 });
 
 async function post(path: string, body: Record<string, unknown>): Promise<string> {
@@ -115,6 +123,21 @@ async function post(path: string, body: Record<string, unknown>): Promise<string
 }
 
 describe('proxy end-to-end', () => {
+  it("non considera i controlli di health come attivita' che impedisce l'aggiornamento", async () => {
+    const idleSince = app.idleSince();
+    expect(idleSince).toBeTypeOf('number');
+    const now = vi.spyOn(Date, 'now').mockReturnValue((idleSince ?? 0) + 60_000);
+    try {
+      const response = await fetch(`${proxyUrl}/_health?probe=1`);
+      expect(response.status).toBe(200);
+      await response.json();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(app.idleSince()).toBe(idleSince);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it('inoltra lo stream intatto, inietta include_usage e misura chat completions', async () => {
     const text = await post('/p/acme/chat/completions', { model: 'gpt-5.4', stream: true });
 
@@ -154,5 +177,28 @@ describe('proxy end-to-end', () => {
       usage: expect.objectContaining({ recorded: 2, delivered: 2, lastError: null }),
       spoolBytes: 0,
     });
+  });
+
+  it("resta occupato durante uno stream anche se arrivano controlli di health", async () => {
+    const response = await fetch(`${proxyUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'gpt-5.4', stream: true, holdStream: true }),
+    });
+    try {
+      expect(app.idleSince()).toBeUndefined();
+      const health = await fetch(`${proxyUrl}/_health`);
+      expect(health.status).toBe(200);
+      await health.json();
+      expect(app.idleSince()).toBeUndefined();
+    } finally {
+      finishStream?.();
+    }
+    await response.text();
+    for (let attempt = 0; attempt < 100 && delivered.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(delivered).toHaveLength(1);
+    expect(app.idleSince()).toBeTypeOf('number');
   });
 });
