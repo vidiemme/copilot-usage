@@ -5,5 +5,6 @@ const manifest = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf-8'),
 ) as { name: string; version: string };
 
+export const CLIENT_PACKAGE = manifest.name;
 export const CLIENT_VERSION = manifest.version;
 export const CLIENT_USER_AGENT = `${manifest.name}/${manifest.version}`;

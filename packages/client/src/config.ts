@@ -36,6 +36,8 @@ export interface ClientConfig {
   developerEmail: string | undefined;
   flushIntervalMs: number;
   flushMaxBatch: number;
+  /** Installa da solo le patch quando gira come servizio. */
+  autoUpdate: boolean;
 }
 
 function parseAttributionTokens(raw: string): Record<string, AttributionMapping> {
@@ -117,6 +119,7 @@ export function loadConfig(source: ConfigSource = process.env): ClientConfig {
     developerEmail: read('DEVELOPER_EMAIL'),
     flushIntervalMs: intOption('FLUSH_INTERVAL_MS', 5000),
     flushMaxBatch: intOption('FLUSH_MAX_BATCH', 100),
+    autoUpdate: !/^(0|false|no|off)$/i.test(optional('AUTO_UPDATE', 'true')),
   };
 }
 

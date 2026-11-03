@@ -355,7 +355,7 @@ con `npx @vidiemme/copilot-proxy@latest`.
 | --- | --- |
 | `setup` | Crea la configurazione della postazione. |
 | `start` | Avvia il proxy in primo piano (comando predefinito se non ne indichi uno). |
-| `status` | Mostra versione installata e in esecuzione, instradamento di editor e Copilot CLI, contatori per client e spool. |
+| `status` | Mostra versione installata e in esecuzione, instradamento di editor e Copilot CLI, contatori per client, spool e stato dell'aggiornamento automatico. |
 | `doctor` | Controlla configurazione, cartelle, collector, editor (anche override commentati), `COPILOT_API_URL` e runtime da riavviare, spool e processo. |
 | `reload [cartella]` | Carica nel collector lo storico delle sessioni gia' fatte: vedi [Caricare lo storico](#caricare-lo-storico). |
 | `restart` | Riavvia il servizio automatico gia' registrato. |
@@ -378,6 +378,7 @@ con `npx @vidiemme/copilot-proxy@latest`.
 | `--name <nome>`, `--email <email>` | Identita' facoltativa per la dashboard. |
 | `--anonymous` | Non invia nome ed email. |
 | `--salt <valore>` | Sovrascrive il salt aziendale; mantienilo coerente nel team. |
+| `--no-auto-update` | Disattiva l'[aggiornamento automatico](#aggiornamento-automatico); `--auto-update` lo riattiva. |
 | `--force` | Ripete il setup partendo dal file esistente, token compreso. |
 
 Per cambiare porta senza reinserire il token:
@@ -469,6 +470,7 @@ generico di tutte le variabili d'ambiente nel file.
 | `COLLECTOR_TIMEOUT_MS` | `10000`. |
 | `SPOOL_PATH` | `spool.jsonl` nella directory di configurazione. |
 | `LOG_LEVEL` | `info`. |
+| `AUTO_UPDATE` | `true`; `false` disattiva l'[aggiornamento automatico](#aggiornamento-automatico). |
 | `TLS_KEY_PATH`, `TLS_CERT_PATH` | Assenti; impostali entrambi per abilitare HTTPS in ingresso. |
 
 La directory di configurazione e':
@@ -564,6 +566,7 @@ in quel caso un `FAIL` sugli editor non dimostra un errore dell'inoltro CLI.
 | Spool in crescita / collector `unreachable` | Controlla rete, URL del collector e log. |
 | Collector `401` / `403` | Token ruotato: vedi [Cambiare il token](#cambiare-il-token). Gli eventi restano in attesa entro i limiti dello spool. |
 | Processo con versione precedente | Dopo l'aggiornamento del pacchetto esegui `restart`. |
+| Aggiornamento automatico fermo | `status` dice perche' non parte o l'ultimo errore; il log del servizio riporta l'output di npm. |
 | Servizio non riparte dopo pulizia cache o cambio Node | Reinstalla globalmente e ripeti `setup --force --autostart`. |
 
 Su macOS il servizio scrive stdout e stderr in `proxy.log` nella directory
@@ -572,7 +575,31 @@ In primo piano i log sono nel terminale.
 
 ## Aggiornamento e rimozione
 
-### Aggiornare
+### Aggiornamento automatico
+
+Il proxy avviato dal servizio (`setup --autostart`) installa da solo le **patch**
+della propria minor, per esempio da 0.7.2 a 0.7.5:
+
+- controlla il registry npm qualche minuto dopo l'avvio e poi ogni 6 ore;
+- installa una versione solo **48 ore dopo la pubblicazione**, se non e'
+  deprecata e se `latest` non e' stato riportato a una versione precedente;
+- installa nello stesso prefisso globale del pacchetto in esecuzione, con l'npm
+  dello stesso Node del servizio. Con piu' versioni di Node (nvm, fnm, Homebrew)
+  aggiorna quella usata dal servizio, qualunque sia il `node` attivo nella shell;
+- aspetta che non ci siano richieste in corso da almeno 30 secondi, poi termina
+  e il servizio lo riavvia con la nuova versione.
+
+Le nuove minor e major restano manuali, perche' possono richiedere di rilanciare
+il setup. L'aggiornamento automatico non parte se il proxy gira in primo piano,
+con `npx`, o se il prefisso globale richiede privilegi di amministratore
+(Node di sistema su Linux): `status` ne indica il motivo.
+
+Per disattivarlo: `setup --force --no-auto-update`, oppure `AUTO_UPDATE=false`
+nel file di configurazione, poi `restart`.
+
+### Aggiornare a mano
+
+Serve per le nuove minor, o se l'aggiornamento automatico non e' attivo:
 
 ```bash
 npm install -g @vidiemme/copilot-proxy@latest

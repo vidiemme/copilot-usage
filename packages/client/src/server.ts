@@ -5,11 +5,18 @@ import { UsageForwarder } from './collector/forwarder.js';
 import type { ClientConfig } from './config.js';
 import { createProxyHandler } from './proxy/handler.js';
 import { ProjectDetector } from './projectDetector.js';
+import type { UpdateStatus } from './selfUpdate.js';
 import { CLIENT_VERSION } from './version.js';
 
 export interface App {
   server: FastifyInstance;
+  /** Da quando non arrivano richieste; `undefined` se ce n'e' una in corso. */
+  idleSince: () => number | undefined;
   close: () => Promise<void>;
+}
+
+export interface AppOptions {
+  updateStatus?: () => UpdateStatus;
 }
 
 function createServer(config: ClientConfig): FastifyInstance {
@@ -37,8 +44,20 @@ function createServer(config: ClientConfig): FastifyInstance {
   }) as unknown as FastifyInstance;
 }
 
-export async function buildApp(config: ClientConfig): Promise<App> {
+export async function buildApp(config: ClientConfig, options: AppOptions = {}): Promise<App> {
   const server = createServer(config);
+
+  // Una risposta in streaming e' in corso finche' la connessione non la chiude.
+  let inFlight = 0;
+  let lastActivityAt = Date.now();
+  server.addHook('onRequest', async (_request, reply) => {
+    inFlight += 1;
+    lastActivityAt = Date.now();
+    reply.raw.once('close', () => {
+      inFlight -= 1;
+      lastActivityAt = Date.now();
+    });
+  });
 
   // Il proxy deve inoltrare il corpo byte per byte, senza reinterpretarlo.
   server.removeAllContentTypeParsers();
@@ -74,6 +93,7 @@ export async function buildApp(config: ClientConfig): Promise<App> {
       (info) => info.size,
       () => 0,
     ),
+    update: options.updateStatus?.(),
   }));
 
   server.route({
@@ -84,6 +104,7 @@ export async function buildApp(config: ClientConfig): Promise<App> {
 
   return {
     server,
+    idleSince: () => (inFlight > 0 ? undefined : lastActivityAt),
     close: async () => {
       await server.close();
       await forwarder.close();

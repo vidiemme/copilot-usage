@@ -34,6 +34,18 @@ export function autostartFile(): string | undefined {
   return undefined;
 }
 
+/**
+ * Vero se il processo e' stato lanciato dal servizio, che lo rilancia quando
+ * termina. Si riconosce dall'ambiente, cosi' vale anche per i servizi
+ * registrati da versioni precedenti.
+ */
+export function runsAsService(env: NodeJS.ProcessEnv = process.env, platform = process.platform): boolean {
+  if (platform === 'darwin') return env.XPC_SERVICE_NAME === LABEL;
+  if (platform === 'linux') return Boolean(env.INVOCATION_ID);
+  if (platform === 'win32') return env[SUPERVISED_VAR] === '1';
+  return false;
+}
+
 export function isAutostartInstalled(): boolean {
   const file = autostartFile();
   return file !== undefined && existsSync(file);

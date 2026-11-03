@@ -16,6 +16,7 @@ import {
   installAutostart,
   isAutostartInstalled,
   restartAutostart,
+  runsAsService,
   runSupervisor,
   uninstallAutostart,
 } from './autostart.js';
@@ -53,6 +54,7 @@ import {
   type ReloadPlan,
   type ReloadSource,
 } from './reload/index.js';
+import { SelfUpdater, type UpdateStatus } from './selfUpdate.js';
 import { buildApp } from './server.js';
 import { gitIdentity, portStatus } from './setupHelpers.js';
 import { CLIENT_VERSION } from './version.js';
@@ -89,6 +91,7 @@ Opzioni di setup:
   --collector-url <url>     endpoint di raccolta, se diverso da quello aziendale
   --salt <valore>           salt degli pseudonimi, se diverso da quello aziendale
   --upstream <url>          endpoint Copilot (default https://api.githubcopilot.com)
+  --no-auto-update          non installare da solo le patch (--auto-update le riattiva)
   --force                   rifa' il setup partendo dalla configurazione esistente
                             (token compreso: per cambiare porta basta --force --port)
 
@@ -258,6 +261,8 @@ async function commandSetup(flags: Record<string, string | boolean | undefined>)
   const workspaceRoots = flags['workspace-roots'] as string | undefined;
   if (workspaceRoots) values.WORKSPACE_ROOTS = workspaceRoots;
   if (flags.upstream) values.UPSTREAM_BASE_URL = String(flags.upstream);
+  if (flags['auto-update'] === false) values.AUTO_UPDATE = 'false';
+  else if (flags['auto-update'] === true) setOrDelete(values, 'AUTO_UPDATE', undefined);
 
   let port = flags.port ? String(flags.port) : values.PORT;
   if (!port && interactive) {
@@ -470,11 +475,24 @@ async function commandStart(flags: Record<string, string | boolean | undefined>)
     return 1;
   }
 
-  const app = await buildApp(config);
+  // Solo il servizio rilancia il processo dopo l'aggiornamento: in primo piano
+  // il proxy terminerebbe e basta.
+  const updater = new SelfUpdater({
+    disabledReason: !config.autoUpdate
+      ? 'disattivato dalla configurazione (AUTO_UPDATE)'
+      : !runsAsService()
+        ? "il proxy non e' avviato dal servizio di avvio automatico"
+        : undefined,
+    idleSince: () => app.idleSince(),
+    restart: () => shutdown('aggiornamento'),
+  });
+  const app = await buildApp(config, { updateStatus: () => updater.status() });
   await app.server.listen({ port: config.port, host: config.host });
+  updater.start(app.server.log);
 
-  const shutdown = (signal: string): void => {
-    app.server.log.info({ signal }, 'arresto in corso');
+  const shutdown = (reason: string): void => {
+    app.server.log.info({ reason }, 'arresto in corso');
+    updater.close();
     void app.close().then(
       () => process.exit(0),
       (error: unknown) => {
@@ -609,6 +627,9 @@ async function commandDoctor(): Promise<number> {
     if (health.version && health.version !== CLIENT_VERSION) {
       warn(`il proxy in esecuzione e' la ${health.version}, questo comando la ${CLIENT_VERSION}: lancia "restart"`);
     }
+    if (health.update?.lastError) {
+      warn(`aggiornamento automatico non riuscito: ${health.update.lastError}`);
+    }
     // L'impostazione di VS Code e' di debug: un aggiornamento dell'estensione
     // puo' ignorarla senza avvisare, e lo si vede solo dall'assenza di traffico.
     const silence = trafficSilence(health);
@@ -623,6 +644,7 @@ type Level = 'ok' | 'warn' | 'fail';
 
 interface ProxyHealth {
   version?: string;
+  update?: UpdateStatus;
   startedAt?: string;
   spoolBytes?: number;
   usage?: {
@@ -727,7 +749,17 @@ async function commandStatus(): Promise<number> {
     if (usage.lastError) console.log(`ultimo errore del collector: ${usage.lastError}`);
   }
   console.log(`spool: ${health.spoolBytes ?? 0} byte in attesa`);
+  console.log(`aggiornamento automatico: ${describeUpdate(health.update)}`);
+  if (health.update?.lastError) console.log(`  ultimo errore: ${health.update.lastError}`);
   return 0;
+}
+
+function describeUpdate(update: UpdateStatus | undefined): string {
+  // I proxy precedenti non lo riportano.
+  if (!update) return 'non previsto da questa versione del proxy';
+  if (!update.enabled) return `no, ${update.reason ?? 'motivo sconosciuto'}`;
+  if (update.pending) return `installata la ${update.pending}, riparte appena il proxy e' inattivo`;
+  return `attivo per le patch${update.lastCheckAt ? `, ultimo controllo ${update.lastCheckAt}` : ''}`;
 }
 
 /**
@@ -1006,6 +1038,8 @@ async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
     allowPositionals: true,
+    // Per --no-auto-update.
+    allowNegative: true,
     options: {
       'collector-url': { type: 'string' },
       salt: { type: 'string' },
@@ -1018,6 +1052,7 @@ async function main(): Promise<void> {
       anonymous: { type: 'boolean' },
       vscode: { type: 'boolean' },
       autostart: { type: 'boolean' },
+      'auto-update': { type: 'boolean' },
       litellm: { type: 'boolean' },
       'litellm-config': { type: 'string' },
       'agents-all': { type: 'boolean' },
