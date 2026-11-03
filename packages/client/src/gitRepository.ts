@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
-import { basename, isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, resolve } from 'node:path';
 import type { RepositoryIdentity } from '@vidiemme/copilot-usage-contract';
 import { sanitizeIdentifier } from './attribution.js';
 
@@ -9,6 +9,8 @@ const REMOTE_HEADER = /^\s*\[\s*remote\s+"([^"]+)"\s*\]/;
 const SECTION_HEADER = /^\s*\[/;
 const URL_ENTRY = /^\s*url\s*=\s*(.+?)\s*$/;
 const GITDIR_ENTRY = /^gitdir:\s*(.+)$/m;
+/** Coda `worktrees/<nome>` del puntatore di un worktree, con entrambi i separatori. */
+const WORKTREE_SUFFIX = /[\\/]worktrees[\\/][^\\/]+[\\/]*$/;
 const MAX_CONFIG_BYTES = 256 * 1024;
 const MAX_PROJECT_ID_LENGTH = 160;
 
@@ -42,8 +44,17 @@ function resolveGitDir(projectRoot: string): string | undefined {
 
   const target = match[1]!.trim();
   const absolute = isAbsolute(target) ? target : resolve(projectRoot, target);
-  const worktrees = absolute.indexOf(`${sep}worktrees${sep}`);
-  return worktrees >= 0 ? absolute.slice(0, worktrees) : absolute;
+
+  // Git scrive in ogni worktree `commondir`, il puntatore alla directory principale.
+  try {
+    const common = readFileSync(join(absolute, 'commondir'), 'utf-8').trim();
+    if (common) return isAbsolute(common) ? common : resolve(absolute, common);
+  } catch {
+    // Submodule, o worktree senza `commondir`: si prova dalla forma del path.
+  }
+  // Git for Windows scrive il puntatore con `/`: il separatore non e' detto sia quello di sistema.
+  const worktree = WORKTREE_SUFFIX.exec(absolute);
+  return worktree ? absolute.slice(0, worktree.index) : absolute;
 }
 
 /** Legge gli URL dei remote da un file di configurazione Git. */

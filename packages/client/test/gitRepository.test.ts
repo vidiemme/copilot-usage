@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -102,5 +103,29 @@ describe('readRepositoryIdentity', () => {
     writeFileSync(join(worktree, '.git'), `gitdir: ${join(main, '.git', 'worktrees', 'hotfix')}\n`);
 
     expect(readRepositoryIdentity(worktree).projectId).toBe('acme/app');
+  });
+
+  it('usa commondir anche se il repository sta sotto una cartella "worktrees"', () => {
+    const main = makeRepo(join('worktrees', 'app'), 'git@github.com:acme/app.git');
+    const pointer = join(main, '.git', 'worktrees', 'hotfix');
+    mkdirSync(pointer, { recursive: true });
+    writeFileSync(join(pointer, 'commondir'), '../..\n');
+    const worktree = join(root, 'app-hotfix-2');
+    mkdirSync(worktree, { recursive: true });
+    writeFileSync(join(worktree, '.git'), `gitdir: ${pointer}\n`);
+
+    expect(readRepositoryIdentity(worktree).projectId).toBe('acme/app');
+  });
+
+  it('riconosce un worktree creato da git', () => {
+    const main = join(root, 'vero');
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: main, stdio: 'ignore' });
+    mkdirSync(main, { recursive: true });
+    git('init', '-q');
+    git('remote', 'add', 'origin', 'https://gitlab.example.com/cliente/web/portale.git');
+    git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
+    git('worktree', 'add', '-q', join(root, 'vero-feature'), '-b', 'feature');
+
+    expect(readRepositoryIdentity(join(root, 'vero-feature')).projectId).toBe('cliente/web/portale');
   });
 });
