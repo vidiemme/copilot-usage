@@ -50,7 +50,8 @@ export async function buildApp(config: ClientConfig, options: AppOptions = {}): 
   // Una risposta in streaming e' in corso finche' la connessione non la chiude.
   let inFlight = 0;
   let lastActivityAt = Date.now();
-  server.addHook('onRequest', async (_request, reply) => {
+  server.addHook('onRequest', async (request, reply) => {
+    if (request.routeOptions.url === '/_health') return;
     inFlight += 1;
     lastActivityAt = Date.now();
     reply.raw.once('close', () => {

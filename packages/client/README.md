@@ -578,39 +578,60 @@ In primo piano i log sono nel terminale.
 
 ### Aggiornamento automatico
 
-Il proxy avviato dal servizio (`setup --autostart`) installa da solo le **patch**
-della propria minor, per esempio da 0.7.2 a 0.7.5:
+Il proxy avviato dal servizio (`setup --autostart`) installa da solo le nuove
+**versioni stabili**, incluse minor e major:
 
 - controlla il registry npm qualche minuto dopo l'avvio e poi ogni 6 ore;
 - installa una versione solo **48 ore dopo la pubblicazione**, se non e'
   deprecata e se `latest` non e' stato riportato a una versione precedente;
+  non installa prerelease e non torna a versioni piu' vecchie;
 - installa nello stesso prefisso globale del pacchetto in esecuzione, con l'npm
   dello stesso Node del servizio. Con piu' versioni di Node (nvm, fnm, Homebrew)
   aggiorna quella usata dal servizio, qualunque sia il `node` attivo nella shell;
+- usa `--engine-strict`: se la versione richiede un Node incompatibile,
+  l'installazione fallisce e l'errore compare in `status` e `doctor`;
 - aspetta che non ci siano richieste in corso da almeno 30 secondi, poi termina
-  e il servizio lo riavvia con la nuova versione.
+  e il servizio lo riavvia con la nuova versione. I controlli `/_health` non
+  prolungano l'attesa; le risposte in streaming restano protette.
 
-Le nuove minor e major restano manuali, perche' possono richiedere di rilanciare
-il setup. L'aggiornamento automatico non parte se il proxy gira in primo piano,
-con `npx`, o se il prefisso globale richiede privilegi di amministratore
-(Node di sistema su Linux): `status` ne indica il motivo.
+L'aggiornamento non modifica la configurazione degli editor o del sistema:
+nuove integrazioni possono comunque richiedere il setup. Non parte se il proxy
+gira in primo piano, con `npx`, o se il prefisso globale richiede privilegi di
+amministratore (Node di sistema su Linux): `status` ne indica il motivo.
+
+Le versioni gia' installate dalla 0.8.0 alla 0.10.1 cercano soltanto patch della
+propria minor. Le patch di transizione 0.8.2, 0.9.1 e 0.10.2 permettono loro
+di adottare la nuova regola senza cambiare il tag npm `latest`. Anche queste
+patch rispettano le 48 ore di attesa e richiedono che l'aggiornamento automatico
+sia attivo e il servizio possa riavviarsi.
+
+Le versioni fino alla 0.7.2 non contengono un aggiornamento automatico: occorre
+aggiornarle **una volta** su ogni postazione, anche tramite MDM, seguendo i
+passaggi qui sotto. Nessun aggiornamento pubblicato sul registry puo' avviare
+da remoto codice che quelle versioni non hanno.
 
 Per disattivarlo: `setup --force --no-auto-update`, oppure `AUTO_UPDATE=false`
 nel file di configurazione, poi `restart`.
 
 ### Aggiornare a mano
 
-Serve per le nuove minor, o se l'aggiornamento automatico non e' attivo:
+Serve per la prima migrazione dalle versioni fino alla 0.7.2 o se
+l'aggiornamento automatico non e' attivo. Esegui i comandi come l'utente del
+servizio, con il Node/npm del prefisso usato dal servizio:
 
 ```bash
 npm install -g @vidiemme/copilot-proxy@latest
+copilot-proxy status
 copilot-proxy restart
 copilot-proxy doctor
 ```
 
-`restart` richiede un servizio gia' installato. Se usi `start` in primo piano,
-ferma e rilancia il processo. Se passi da `npx` all'installazione globale,
-o cambia il percorso di Node, registra nuovamente il servizio:
+`restart` richiede un servizio gia' installato: eseguilo quando non ci sono
+risposte in corso. `status` segnala se il servizio punta a un'altra
+installazione; in quel caso un'installazione globale nel prefisso sbagliato
+non aggiorna il servizio. Se usi `start` in primo piano, ferma e rilancia il
+processo. Se passi da `npx` all'installazione globale, o cambia il percorso di
+Node, registra nuovamente il servizio:
 
 ```bash
 copilot-proxy setup --force --vscode --autostart
