@@ -57,8 +57,38 @@ export function isAutostartInstalled(): boolean {
  * Non si usa `process.argv[1]`: con un `bin` di npm quello e' uno shim, e il
  * servizio deve puntare al file vero.
  */
-function cliEntry(): string {
+export function cliEntry(): string {
   return fileURLToPath(new URL('cli.js', import.meta.url));
+}
+
+/**
+ * Il `cli.js` che il servizio registrato avvia, letto dal suo file.
+ *
+ * Puo' non essere questo: un setup fatto con `npx` punta alla sua cache, e
+ * aggiornare il pacchetto globale non cambia cosa riparte con `restart`.
+ */
+export function registeredEntry(): string | undefined {
+  const file = autostartFile();
+  if (file === undefined) return undefined;
+  try {
+    return entryFromServiceFile(readFileSync(file, 'utf-8'), process.platform);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Ricava il `cli.js` dal file scritto da `installAutostart`. */
+export function entryFromServiceFile(content: string, platform: NodeJS.Platform): string | undefined {
+  if (platform === 'darwin') {
+    const args = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(content)?.[1] ?? '';
+    const entry = [...args.matchAll(/<string>([^<]*)<\/string>/g)][1]?.[1];
+    return entry?.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  }
+  if (platform === 'win32') {
+    return /^"[^"]*" "([^"]*)" supervise\r?$/m.exec(content)?.[1]?.replace(/%%/g, '%');
+  }
+  // `ExecStart=<node> <cli.js> start`, senza virgolette: il primo argomento e' l'eseguibile di Node.
+  return /^ExecStart=.*?[\\/]node(?:\.exe)? (.+) start$/m.exec(content)?.[1];
 }
 
 function escapeXml(value: string): string {
@@ -194,7 +224,8 @@ ${envBlock}  <key>StandardOutPath</key><string>${escapeXml(log)}</string>
       execFileSync('launchctl', ['bootstrap', domain, file], { stdio: 'pipe' });
       break;
     } catch (error) {
-      if (attempt >= 10) throw error;
+      // Il vecchio proxy chiude prima le connessioni aperte: puo' metterci qualche secondo.
+      if (attempt >= 40) throw error;
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
     }
   }

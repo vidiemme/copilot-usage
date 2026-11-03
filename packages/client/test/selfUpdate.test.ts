@@ -2,7 +2,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, w
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { runsAsService } from '../src/autostart.js';
+import { entryFromServiceFile, runsAsService, startupScript } from '../src/autostart.js';
 import { loadConfig } from '../src/config.js';
 import { installTarget, pickPatchUpdate, UPDATE_MIN_AGE_MS, type Packument } from '../src/selfUpdate.js';
 
@@ -133,5 +133,41 @@ describe('quando aggiornarsi', () => {
     expect(loadConfig(token).autoUpdate).toBe(true);
     expect(loadConfig({ ...token, AUTO_UPDATE: 'false' }).autoUpdate).toBe(false);
     expect(loadConfig({ ...token, AUTO_UPDATE: '0' }).autoUpdate).toBe(false);
+  });
+});
+
+describe('installazione avviata dal servizio', () => {
+  it('legge il cli.js dal plist di launchd', () => {
+    const plist = `<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.vidiemme.copilot-proxy</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/a/.nvm/versions/node/v22.23.4/bin/node</string>
+    <string>/Users/a/.npm/_npx/9374c6867ef579c0/node_modules/@vidiemme/copilot-proxy/dist/cli.js</string>
+    <string>start</string>
+  </array>
+  <key>StandardOutPath</key><string>/Users/a/.config/copilot-proxy/proxy.log</string>
+</dict>
+</plist>`;
+    expect(entryFromServiceFile(plist, 'darwin')).toBe(
+      '/Users/a/.npm/_npx/9374c6867ef579c0/node_modules/@vidiemme/copilot-proxy/dist/cli.js',
+    );
+  });
+
+  it('legge il cli.js dalla unit di systemd', () => {
+    const unit = `[Service]
+ExecStart=/home/a/.nvm/versions/node/v22.23.4/bin/node /home/a/.nvm/versions/node/v22.23.4/lib/node_modules/@vidiemme/copilot-proxy/dist/cli.js start
+Restart=always
+`;
+    expect(entryFromServiceFile(unit, 'linux')).toBe(
+      '/home/a/.nvm/versions/node/v22.23.4/lib/node_modules/@vidiemme/copilot-proxy/dist/cli.js',
+    );
+  });
+
+  it('legge il cli.js dallo script di Esecuzione automatica', () => {
+    const entry = 'C:\\Users\\Mario 100%\\AppData\\Roaming\\npm\\node_modules\\@vidiemme\\copilot-proxy\\dist\\cli.js';
+    const script = startupScript('C:\\Program Files\\nodejs\\node.exe', entry, {});
+    expect(entryFromServiceFile(script, 'win32')).toBe(entry);
   });
 });

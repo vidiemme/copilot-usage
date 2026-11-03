@@ -566,6 +566,7 @@ in quel caso un `FAIL` sugli editor non dimostra un errore dell'inoltro CLI.
 | Spool in crescita / collector `unreachable` | Controlla rete, URL del collector e log. |
 | Collector `401` / `403` | Token ruotato: vedi [Cambiare il token](#cambiare-il-token). Gli eventi restano in attesa entro i limiti dello spool. |
 | Processo con versione precedente | Dopo l'aggiornamento del pacchetto esegui `restart`. |
+| `status` o `doctor`: il servizio avvia un'altra installazione | Il servizio punta a una copia diversa, tipicamente la cache di `npx` del primo setup, e `restart` riavvia quella. Dopo `npm install -g` esegui `setup --force --autostart`. |
 | Aggiornamento automatico fermo | `status` dice perche' non parte o l'ultimo errore; il log del servizio riporta l'output di npm. |
 | Servizio non riparte dopo pulizia cache o cambio Node | Reinstalla globalmente e ripeti `setup --force --autostart`. |
 

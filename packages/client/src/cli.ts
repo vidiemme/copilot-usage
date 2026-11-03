@@ -13,8 +13,10 @@ import {
   uninstallRuntimeRouting,
 } from './agentRuntime.js';
 import {
+  cliEntry,
   installAutostart,
   isAutostartInstalled,
+  registeredEntry,
   restartAutostart,
   runsAsService,
   runSupervisor,
@@ -624,7 +626,10 @@ async function commandDoctor(): Promise<number> {
   );
 
   if (health) {
-    if (health.version && health.version !== CLIENT_VERSION) {
+    const elsewhere = serviceElsewhere();
+    if (elsewhere) {
+      warn(`il servizio avvia ${elsewhere}, non questa installazione: ${RELINK_HINT}`);
+    } else if (health.version && health.version !== CLIENT_VERSION) {
       warn(`il proxy in esecuzione e' la ${health.version}, questo comando la ${CLIENT_VERSION}: lancia "restart"`);
     }
     if (health.update?.lastError) {
@@ -708,6 +713,8 @@ async function commandStatus(): Promise<number> {
   console.log(`copilot-proxy ${CLIENT_VERSION}`);
   console.log(`nome in dashboard: ${config.developerName ?? 'nessuno (pseudonimo)'}`);
   console.log(`avvio automatico: ${isAutostartInstalled() ? 'attivo' : 'non installato'}`);
+  const elsewhere = serviceElsewhere();
+  if (elsewhere) console.log(`  avvia ${elsewhere}, non questa installazione: ${RELINK_HINT}`);
 
   // Instradamento: e' cio' che decide se il traffico passa di qui.
   for (const editor of installedEditors()) {
@@ -749,14 +756,15 @@ async function commandStatus(): Promise<number> {
     if (usage.lastError) console.log(`ultimo errore del collector: ${usage.lastError}`);
   }
   console.log(`spool: ${health.spoolBytes ?? 0} byte in attesa`);
-  console.log(`aggiornamento automatico: ${describeUpdate(health.update)}`);
+  console.log(`aggiornamento automatico: ${describeUpdate(health)}`);
   if (health.update?.lastError) console.log(`  ultimo errore: ${health.update.lastError}`);
   return 0;
 }
 
-function describeUpdate(update: UpdateStatus | undefined): string {
+function describeUpdate(health: ProxyHealth): string {
+  const update = health.update;
   // I proxy precedenti non lo riportano.
-  if (!update) return 'non previsto da questa versione del proxy';
+  if (!update) return `non previsto dalla ${health.version ?? 'versione'} in esecuzione`;
   if (!update.enabled) return `no, ${update.reason ?? 'motivo sconosciuto'}`;
   if (update.pending) return `installata la ${update.pending}, riparte appena il proxy e' inattivo`;
   return `attivo per le patch${update.lastCheckAt ? `, ultimo controllo ${update.lastCheckAt}` : ''}`;
@@ -988,6 +996,20 @@ async function commandReload(
   return 0;
 }
 
+const RELINK_HINT = 'rilancia "setup --force --autostart" da questa installazione';
+
+/** Il `cli.js` avviato dal servizio, se non e' quello di questo comando. */
+function serviceElsewhere(): string | undefined {
+  if (!isAutostartInstalled()) return undefined;
+  const registered = registeredEntry();
+  if (!registered) return undefined;
+  const normalize = (file: string): string => {
+    const resolved = resolvePath(file);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  return normalize(registered) === normalize(cliEntry()) ? undefined : registered;
+}
+
 function commandRestart(): number {
   try {
     restartAutostart();
@@ -996,6 +1018,8 @@ function commandRestart(): number {
     return 1;
   }
   console.log('Proxy riavviato.');
+  const elsewhere = serviceElsewhere();
+  if (elsewhere) console.log(`ATTENZIONE: il servizio avvia ${elsewhere}, non questa installazione: ${RELINK_HINT}`);
   return 0;
 }
 
