@@ -511,7 +511,8 @@ generico di tutte le variabili d'ambiente nel file.
 
 Quando e' configurato il nome del developer, il proxy include automaticamente l'hostname
 del sistema nell'header `X-Device-Name`. Senza nome, anche con `--anonymous`, non lo invia.
-Il collector lo usa solo come etichetta dello pseudonimo: non separa i costi per macchina.
+Il collector lo registra su ogni evento e divide il costo per macchina, anche quando piu'
+postazioni condividono lo stesso account Copilot e quindi lo stesso pseudonimo.
 
 La directory di configurazione e':
 
