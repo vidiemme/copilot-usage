@@ -176,6 +176,22 @@ describe('ProjectDetector', () => {
     expect(detector().detect(request, 's:1')?.repository.projectId).toBe('acme/agente');
   });
 
+  it('attribuisce al clone accanto un worktree <repo>.worktrees gia cancellato', () => {
+    makeRepo(['cliente', 'server-node'], 'git@gitlab.com:cliente/prodotto/server-node.git');
+    // Solo la cartella contenitore: il worktree del task non esiste piu'.
+    mkdirSync(join(root, 'cliente', 'server-node.worktrees'), { recursive: true });
+    const gone = join(root, 'cliente', 'server-node.worktrees', 'sentry-issue-42-fix');
+
+    expect(detector().resolve(gone)?.projectId).toBe('cliente/prodotto/server-node');
+    expect(detector().detect(body({ text: `${gone}/src/app.ts` }), 's:1')?.repository.projectId).toBe(
+      'cliente/prodotto/server-node',
+    );
+  });
+
+  it('non inventa un clone per un .worktrees senza repository accanto', () => {
+    expect(detector().resolve(join(root, 'orfano.worktrees', 'task'))).toBeUndefined();
+  });
+
   it('resta inattivo senza root configurati', () => {
     const instance = new ProjectDetector({
       roots: [],

@@ -105,6 +105,28 @@ function isLinkedWorktree(directory: string): boolean {
   return statSync(`${directory}${sep}.git`, { throwIfNoEntry: false })?.isFile() === true;
 }
 
+const WORKTREES_SUFFIX = '.worktrees';
+
+/**
+ * Clone principale di un worktree nella forma `<repo>.worktrees/<nome>`, quella
+ * usata dalle sessioni agentiche di VS Code e di Copilot CLI.
+ *
+ * Il worktree viene cancellato a fine task, mentre la sessione registrata
+ * continua a puntarci: risalendo dal path non si trova piu' nessun `.git` e
+ * l'identita' diventerebbe il nome del task. Il clone accanto invece resta, ed
+ * e' lo stesso repository.
+ */
+function siblingWorktreeOwner(path: string): string | undefined {
+  const parts = path.split(sep);
+  for (let index = parts.length - 2; index >= 1; index -= 1) {
+    const part = parts[index]!;
+    if (part.length > WORKTREES_SUFFIX.length && part.endsWith(WORKTREES_SUFFIX)) {
+      return [...parts.slice(0, index), part.slice(0, -WORKTREES_SUFFIX.length)].join(sep);
+    }
+  }
+  return undefined;
+}
+
 /**
  * Deduce il progetto di appartenenza di una richiesta dai path assoluti che
  * questa cita.
@@ -216,24 +238,31 @@ export class ProjectDetector {
     const cached = this.cache.get(candidate);
     if (cached && cached.expiresAt > now) return cached.repository ?? undefined;
 
-    const root = this.roots.find((item) => startsWithRoot(candidate, item));
-    const toolOwned = root !== undefined && isToolOwned(candidate, root);
-
-    let result: RepositoryIdentity | undefined;
-    let directory = candidate;
-    while (root && directory.length > root.length) {
-      if (this.markers.some((marker) => existsSync(`${directory}${sep}${marker}`))) {
-        if (!toolOwned || isLinkedWorktree(directory)) result = readRepositoryIdentity(directory);
-        break;
-      }
-      const parent = dirname(directory);
-      if (parent === directory) break;
-      directory = parent;
+    let result = this.walkUp(candidate);
+    if (!result) {
+      const main = siblingWorktreeOwner(candidate);
+      if (main) result = this.walkUp(main);
     }
 
     if (this.cache.size >= MAX_CACHE_ENTRIES) this.cache.clear();
     this.cache.set(candidate, { repository: result ?? null, expiresAt: now + CACHE_TTL_MS });
     return result;
+  }
+
+  private walkUp(candidate: string): RepositoryIdentity | undefined {
+    const root = this.roots.find((item) => startsWithRoot(candidate, item));
+    const toolOwned = root !== undefined && isToolOwned(candidate, root);
+
+    let directory = candidate;
+    while (root && directory.length > root.length) {
+      if (this.markers.some((marker) => existsSync(`${directory}${sep}${marker}`))) {
+        return !toolOwned || isLinkedWorktree(directory) ? readRepositoryIdentity(directory) : undefined;
+      }
+      const parent = dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+    return undefined;
   }
 
   private remember(sessionKey: string, repository: RepositoryIdentity, now: number): void {
