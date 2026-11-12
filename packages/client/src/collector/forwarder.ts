@@ -1,4 +1,5 @@
 import { appendFile, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import { MAX_EVENTS_PER_BATCH, mergeHydraFusion, type UsageEventPayload } from '@vidiemme/copilot-usage-contract';
 import type { ClientConfig } from '../config.js';
 import { CLIENT_USER_AGENT } from '../version.js';
@@ -62,7 +63,7 @@ export function clientFamily(clientName: string | null | undefined): string {
   return name || 'sconosciuto';
 }
 
-/** Header di ogni invio al collector: credenziale e, se dichiarata, identita' del developer. */
+/** Header di ogni invio al collector: credenziale e identita' dichiarata. */
 export function collectorHeaders(config: ClientConfig): Record<string, string> {
   const headers: Record<string, string> = {
     'content-type': 'application/json',
@@ -71,6 +72,8 @@ export function collectorHeaders(config: ClientConfig): Record<string, string> {
   };
   // Gli header HTTP sono ASCII: nomi accentati viaggiano percent-encoded.
   if (config.developerName) {
+    const deviceName = hostname().trim();
+    if (deviceName) headers['x-device-name'] = encodeURIComponent(deviceName);
     headers['x-developer-name'] = encodeURIComponent(config.developerName);
     if (config.developerEmail) {
       headers['x-developer-email'] = encodeURIComponent(config.developerEmail);

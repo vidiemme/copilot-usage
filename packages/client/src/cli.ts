@@ -89,7 +89,7 @@ Opzioni di setup:
   --port <n>                porta locale del proxy (default 8787; chiesta se interattivo)
   --name <nome>             nome da mostrare nella dashboard (default: git user.name)
   --email <email>           email associata (default: git user.email)
-  --anonymous               non inviare nome ed email: resta solo lo pseudonimo
+  --anonymous               non inviare nome, email e hostname: resta lo pseudonimo
   --workspace-roots <a,b>   cartelle sotto cui vivono i repository (default: la home)
   --collector-url <url>     endpoint di raccolta, se diverso da quello aziendale
   --salt <valore>           salt degli pseudonimi, se diverso da quello aziendale

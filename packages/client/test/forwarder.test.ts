@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import type { UsageEventPayload } from '@vidiemme/copilot-usage-contract';
@@ -17,6 +17,7 @@ let status: number;
 let requests: number;
 let userAgent: string | undefined;
 let developerName: string | undefined;
+let deviceName: string | undefined;
 
 const silentLogger = { info: () => {}, warn: () => {}, error: () => {} };
 
@@ -65,6 +66,7 @@ beforeEach(async () => {
   received = [];
   requests = 0;
   status = 202;
+  deviceName = undefined;
 
   server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -73,6 +75,7 @@ beforeEach(async () => {
       requests += 1;
       userAgent = req.headers['user-agent'];
       developerName = req.headers['x-developer-name'] as string | undefined;
+      deviceName = req.headers['x-device-name'] as string | undefined;
       if (req.headers.authorization !== `Bearer ${TOKEN}`) {
         res.writeHead(401).end();
         return;
@@ -168,14 +171,16 @@ describe('UsageForwarder', () => {
 
     expect(userAgent).toMatch(/^@vidiemme\/copilot-proxy\/\d+\.\d+\.\d+/);
     expect(developerName).toBeUndefined();
+    expect(deviceName).toBeUndefined();
   });
 
-  it('manda il nome del developer, se configurato', async () => {
+  it('manda il nome del developer e l’hostname, se configurato', async () => {
     const forwarder = makeForwarder({ developerName: 'Niccolò Rossi' });
     forwarder.enqueue(makeEvent('a'));
     await forwarder.flush();
 
     expect(decodeURIComponent(developerName ?? '')).toBe('Niccolò Rossi');
+    expect(decodeURIComponent(deviceName ?? '')).toBe(hostname().trim());
   });
 
   it('tiene i contatori di consegna', async () => {

@@ -76,8 +76,8 @@ copilot-proxy status
 copilot-proxy doctor
 ```
 
-Per non inviare nome ed email aggiungi `--anonymous` al setup. Questo mantiene
-lo pseudonimo tecnico: non rende anonimo l'intero evento.
+Per non inviare nome, email e hostname aggiungi `--anonymous` al setup. Questo
+mantiene lo pseudonimo tecnico: non rende anonimo l'intero evento.
 
 L'installazione globale mantiene stabile il percorso del servizio. Il setup con
 `npx --autostart` e' possibile, ma il servizio punterebbe alla cache npm:
@@ -405,7 +405,7 @@ con `npx @vidiemme/copilot-proxy@latest`.
 | `--collector-url <url>` | Endpoint di ingest, incluso il path `/v1/usage`. |
 | `--upstream <url>` | Base URL upstream, default `https://api.githubcopilot.com`. |
 | `--name <nome>`, `--email <email>` | Identita' facoltativa per la dashboard. |
-| `--anonymous` | Non invia nome ed email. |
+| `--anonymous` | Non invia nome, email e hostname. |
 | `--salt <valore>` | Sovrascrive il salt aziendale; mantienilo coerente nel team. |
 | `--no-auto-update` | Disattiva l'[aggiornamento automatico](#aggiornamento-automatico); `--auto-update` lo riattiva. |
 | `--force` | Ripete il setup partendo dal file esistente, token compreso. |
@@ -509,6 +509,10 @@ generico di tutte le variabili d'ambiente nel file.
 | `AUTO_UPDATE` | `true`; `false` disattiva l'[aggiornamento automatico](#aggiornamento-automatico). |
 | `TLS_KEY_PATH`, `TLS_CERT_PATH` | Assenti; impostali entrambi per abilitare HTTPS in ingresso. |
 
+Quando e' configurato il nome del developer, il proxy include automaticamente l'hostname
+del sistema nell'header `X-Device-Name`. Senza nome, anche con `--anonymous`, non lo invia.
+Il collector lo usa solo come etichetta dello pseudonimo: non separa i costi per macchina.
+
 La directory di configurazione e':
 
 - macOS/Linux: `~/.config/copilot-proxy`, oppure `$XDG_CONFIG_HOME/copilot-proxy`;
@@ -532,7 +536,7 @@ letto in memoria per inoltro, ispezione e attribuzione. Al collector arrivano:
 - pseudonimo/ID developer e sua fonte, user agent e ID sessione se disponibile;
 - endpoint, modello, contatori di token, durata e indicazione streaming;
 - flag `hydraFusion` quando il routing e' rilevabile;
-- nome ed email facoltativi, negli header di invio, salvo `--anonymous`.
+- nome, email e hostname facoltativi, negli header di invio, salvo `--anonymous`.
 
 Non vengono inviati al collector il token Copilot, i path di lavoro rilevati o il
 contenuto della conversazione. Gli URL dei remote sono invece metadati inviati:
